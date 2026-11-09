@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible problem in Kiko.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, follow SECURITY.md. Never include API keys, personal documents, or private conversations."
+  - type: input
+    id: environment
+    attributes:
+      label: Version and operating system
+      description: Include the commit or version and your OS/architecture.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use minimal, non-sensitive sample content.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true

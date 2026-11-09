@@ -1,0 +1,8 @@
+: synthetic fixture; not recorded traffic
+
+data: {"id":"chatcmpl_example","object":"chat.completion.chunk","created":0,"model":"muse-spark-1.3-contributor","choices":[{"index":0,"delta":{"content":"Partial answer"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_example","object":"chat.completion.chunk","created":0,"model":"muse-spark-1.3-contributor","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]
+

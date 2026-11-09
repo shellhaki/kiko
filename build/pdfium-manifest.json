@@ -1,0 +1,8 @@
+{
+  "goModule": "github.com/klippa-app/go-pdfium",
+  "version": "v1.21.4",
+  "pdfium": "8111",
+  "wasmSHA256": "e6f77e01dce34de05ad62515114152da580b64c23871e3e3e2afef3f7bb88ade",
+  "noticeArchive": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8111/pdfium-linux-x64.tgz",
+  "noticeArchiveSHA256": "bdc60126399f39fe768566a18d4be055a7b3681bc9e248e8a6656b4f6cae0aa2"
+}

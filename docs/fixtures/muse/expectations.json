@@ -1,0 +1,35 @@
+{
+  "provenance": "Synthetic protocol examples, not captured responses. Error text and token counts are illustrative.",
+  "cases": [
+    {
+      "file": "text-stream.sse",
+      "text": "Hello, Kiko — ready.",
+      "finish": "stop",
+      "usage_total": 15
+    },
+    {
+      "file": "tool-stream.sse",
+      "finish": "tool_calls",
+      "calls": [
+        {
+          "id": "call_example",
+          "type": "function",
+          "function": {
+            "name": "read",
+            "arguments": "{\"doc_id\":\"doc_example\",\"payload\":{\"outline\":true}}"
+          }
+        }
+      ]
+    },
+    {
+      "file": "truncated-stream.sse",
+      "finish": "length",
+      "execute_tools": false
+    },
+    {
+      "file": "interrupted-tool-stream.sse",
+      "outcome": "interrupted",
+      "execute_tools": false
+    }
+  ]
+}

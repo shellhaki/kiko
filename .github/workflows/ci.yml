@@ -1,0 +1,88 @@
+name: Quality checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check and build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            go-flags: ""
+          - os: windows-2025
+            go-flags: ""
+          - os: ubuntu-24.04
+            go-flags: -tags=webkit2_41
+    env:
+      GOFLAGS: ${{ matrix.go-flags }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Verify Windows C compiler
+        if: runner.os == 'Windows'
+        run: gcc --version
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Run local quality checks
+        run: node scripts/check.mjs
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+      - name: Build Linux desktop application
+        if: runner.os == 'Linux'
+        run: wails build -m -nosyncgomod -tags webkit2_41
+      - name: Build macOS or Windows desktop application
+        if: runner.os != 'Linux'
+        run: wails build -m -nosyncgomod
+      - name: Bundle pinned PDF runtime and notices
+        run: node scripts/setup-runtime.mjs
+      - name: Check native PDF generation
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            export KIKO_TYPST_BINARY="$PWD/build/bin/Kiko.app/Contents/Resources/typst"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            export KIKO_TYPST_BINARY="$PWD/build/bin/typst.exe"
+          else
+            export KIKO_TYPST_BINARY="$PWD/build/bin/typst"
+          fi
+          go test -count=1 ./core/export ./core/deck
+      - name: Smoke test the packaged personal web adapter and exports
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            node scripts/package-smoke.mjs build/bin/Kiko.app/Contents/MacOS/Kiko
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            node scripts/package-smoke.mjs build/bin/Kiko.exe
+          else
+            node scripts/package-smoke.mjs build/bin/Kiko
+          fi

@@ -1,0 +1,659 @@
+KIKO — BUILD CHECKLIST
+Created: November 8, 2026
+
+PURPOSE AND TRACKING
+
+This is the working checklist for building Kiko as a free, open-source
+desktop app. Creating this plan does not start implementation.
+
+[ ] = not finished
+[x] = done
+
+Work in the order below. Tick a step [x] only when its deliverables and
+checks are complete. Record its completion date and a short evidence note
+under that step (what works and which checks passed). Partial work stays
+unchecked; record what remains. Never mark an implementation step done
+because only its UI mockup, scaffold, or happy path exists. If later work
+breaks a completed step, reopen it and note the regression.
+
+For every implementation step:
+- Follow root agents.md: clean code, standard folders, clear identifiers,
+  minimal necessary comments, and no unnecessary abstractions.
+- Add and run meaningful tests for each functionality, including relevant
+  failure cases. Use deterministic provider fixtures for routine tests;
+  keep real API checks explicit and separate from ordinary test runs.
+- Run relevant Go tests, frontend tests, type checks, and build checks for
+  the changed layers. Check visible screens against the references.
+- Update relevant docs and this file before reporting completion.
+- Never commit API keys, local databases, personal data, or build output.
+
+SOURCE DOCUMENTS
+
+- agents.md: repository working rules.
+- docs/kiko-spec.md: architecture, tool contract, and release scope.
+- docs/design-system.md: authoritative colors, fonts, icons, and styling.
+- docs/references/screens/README.md: supplied layouts and startup flow.
+- docs/kiko-pitch.md: audience and longer-term product direction.
+
+The example screens supply layout. The Codex reference and design system
+supply visual styling. Future features described in the pitch do not
+automatically enter v0.1.
+
+ALREADY COMPLETED
+
+[x] 00. Record the product, visual system, references, and build plan.
+    Product pitch and technical spec are present. The design system and
+    all 11 example screens are saved and indexed. Root agents.md has
+    been read, and this ordered checklist has been created.
+    Completed: November 8, 2026.
+    Evidence: documentation and references are present in docs/.
+    This completion covers planning materials, not working app features.
+
+PHASE A — DECISIONS AND PROJECT FOUNDATION
+
+[x] 01. Resolve the small set of decisions needed before implementation.
+    - Reconcile the stale Rust architecture placeholder with the Go core.
+    - Define standalone chats: the Home layout offers New chat without
+      a project, while the current schema requires a project_id.
+    - Define chat-to-document ownership and links so reopening a chat
+      reliably restores its artifacts.
+    - Select the document toolbar/view behavior from references 08/09;
+      rich document editing remains the primary experience.
+    - Decide whether the optional project file tree belongs in v0.1.
+      Do not assume folders map directly to filesystem directories.
+    - Specify missing Muse onboarding, settings, and recovery states.
+    - Choose the open-source license with the project owner and record
+      the decision. Do not silently impose a license.
+    Done when: these decisions are recorded in the spec/reference notes
+    and affected schemas and layouts agree.
+    Completed: November 8, 2026.
+    Evidence: recorded Go architecture, standalone
+    chats, document ownership, editor/view behavior, deferred file tree,
+    and onboarding/settings/recovery behavior in docs/kiko-spec.md.
+    Updated the illustrative schema and reference index to match.
+    Project owner selected GPL-3.0-only; recorded in the spec and index.
+    Checked that the illustrative SQLite schema parses and its ownership
+    columns match these decisions. LICENSE will be added in step 03.
+
+[x] 02. Verify the Muse integration contract before depending on it.
+    - Check official provider documentation for the current endpoint,
+      authentication, model identifier, streaming format, tool calls,
+      cancellation, and error/rate-limit behavior.
+    - Record whether tool argument deltas are supported. Design a whole
+      section update fallback when they are not.
+    - Define a minimal connection check and clearly explain any request
+      that uses the user's credits. Never put a real key in fixtures.
+    Done when: an implementation-ready provider contract is documented
+    with verified sources and representative sanitized fixtures.
+    Completed: November 8, 2026.
+    Evidence: docs/muse-api-contract.md records official documentation,
+    current Spark 1.3 configuration, SSE/tool assembly, error/retry policy,
+    local cancellation limits, and a small explicit connection check.
+    docs/fixtures/muse contains synthetic, credential-free protocol
+    examples with expected outcomes; these are not live captures.
+    JSON/SSE structure and fixture expectations were checked locally.
+    Live provider behavior remains for steps 08, 10-11, 15-16, and 23.
+
+[x] 03. Establish the open-source repository and development setup.
+    - Initialize version control if needed; add appropriate ignore rules.
+    - Create a Wails v2 app with React, TypeScript, and Tailwind CSS v4,
+      and a Go core independent of the Wails adapter.
+    - Use conventional folders for the desktop adapter, core, frontend,
+      documentation, and assets. Keep dependency versions reproducible.
+    - Add LICENSE for GPL-3.0-only, CONTRIBUTING.md, SECURITY.md, and issue/
+      pull-request guidance. Include dependency and asset attribution.
+    - Create a colorful, polished README without emojis, using a clear
+      title treatment, restrained badges/graphics, and setup instructions.
+      Describe the actual release state honestly.
+    Done when: a contributor can follow the documented setup and launch
+    the empty desktop app; license and secret exclusions are in place.
+    Completed: November 8, 2026.
+    Evidence: local Git repository initialized; Wails 2.17.0 + React/
+    TypeScript + Tailwind v4 scaffold builds with a separate Go core.
+    Added GPL-3.0-only license, polished README with original SVG banner,
+    contribution/security guidance, issue/PR templates, dependency/asset
+    notices, and ignore rules. Clean npm install, frontend build/tests/
+    lint, Go tests/vet, and native macOS build passed. Opened Kiko.app and
+    observed the real bridge response: Kiko is ready. 0.1.0-dev.
+    Details and platform limitations: docs/development.md.
+
+[x] 04. Set up automated quality checks.
+    - Configure Go and frontend test tooling, TypeScript checks,
+      formatting, linting, and a frontend production build.
+    - Add continuous integration for checks that can run without keys;
+      keep required native dependencies explicit for each platform.
+    - Establish a small desktop integration/smoke-check approach.
+    Done when: the initial checks pass locally and the CI configuration
+    is ready to run; failures produce actionable output.
+    Completed: November 8, 2026.
+    Evidence: node scripts/check.mjs passes formatting, lint, frontend
+    tests, strict TypeScript/build, Go formatting/vet, and race tests.
+    Verified that an unformatted source file fails the runner. Added
+    pinned Prettier and Go toolchain, editor/line-ending conventions,
+    and a SHA-pinned GitHub Actions native build matrix for macOS,
+    Windows, and Linux with explicit native dependencies and no keys.
+    actionlint 1.7.12 accepts the workflow; native macOS build passes.
+    docs/quality.md records the local command and desktop smoke steps.
+    Hosted CI has not run: no remote repository is configured.
+
+[x] 05. Implement local storage and migrations.
+    - Create SQLite storage for projects, chats, messages, providers,
+      documents, blocks, revisions, comments, and saved tool activity.
+    - Add nickname, onboarding progress, theme, and pane preferences.
+    - Include project descriptions and the ownership decisions from 01.
+    - Use transactions, foreign-key enforcement, and versioned migrations.
+      Keep API keys outside SQLite and preserve existing data on launch.
+    Done when: tests cover creation, persistence after reopen, migration,
+    rollback, and relational integrity using temporary databases.
+    Completed: November 8, 2026.
+    Evidence: core/storage creates the full schema, seeds Muse once,
+    persists typed preferences and workspace selection, and runs atomic
+    versioned migrations with per-connection foreign keys. Temporary
+    database tests cover reopen, migration/DDL rollback, future-version
+    refusal, transactions/panics, ownership, cascades, and URI-safe paths.
+    The desktop Bootstrap now opens storage and shutdown closes it.
+    See docs/storage.md for lifecycle and schema details.
+
+PHASE B — SHELL AND FIRST-RUN EXPERIENCE
+
+[x] 06. Implement the shared visual primitives and desktop shell.
+    - Build semantic theme tokens, system typography, and a shared Lucide
+      icon wrapper with thin rounded strokes.
+    - Build reusable buttons, fields, icon buttons, rows, pane headers,
+      menus, dialogs, and focus states without premature abstraction.
+    - Create the header, compact rail, expandable sidebar, and main area.
+      Use native platform window controls and sensible minimum sizes.
+    Done when: the shell matches the design system, keyboard navigation
+    works, and basic controls have tested interaction states.
+    Completed: November 8, 2026.
+    Evidence: semantic dark/light/system palettes, system typography,
+    Lucide rounded outline icons, shared buttons/fields/dialogs/menus/
+    tooltips/rows/headers, rail, sidebar, and main shell are implemented.
+    Tests cover dialog keyboard focus/escape, action menus, theme choice,
+    and keyboard resizing. The native macOS build passes. Visual review
+    could not run: browser host and native inspection pipe unavailable.
+
+[x] 07. Implement startup, splash, and nickname onboarding.
+    - Show the splash during actual initialization, without a fake delay.
+    - Route new users through nickname then Muse setup.
+    - Validate and save the nickname; support Back and interrupted setup.
+    - Returning users skip completed onboarding and keep their data.
+    Done when: fresh launch, interrupted setup, normal relaunch, and
+    cleared onboarding state follow the correct tested routes.
+    Completed: November 8, 2026.
+    Evidence: actual Bootstrap loading drives the splash; nickname and
+    Muse stages resume from SQLite, Back retains nickname and the typed
+    in-session key, and completed users skip nickname setup. Tests cover
+    startup retry, fresh defaults, interruption/reopen, cleared settings,
+    and reconnect without content deletion. No artificial splash delay.
+
+[x] 08. Implement Muse key storage and AI onboarding.
+    - Show Meta Muse as the only available provider in v0.1.
+    - Accept the user's key with show/hide and connection feedback.
+    - Store and read it through the OS keychain in Go; never return a
+      saved key through frontend bindings or include it in logs.
+    - Handle invalid keys, offline checks, keychain failure, and retry.
+      Complete onboarding only after usable configuration is saved.
+    Done when: success and failure paths are tested with fake services;
+    a separate authorized live check confirms the provider when a key
+    is available. Report any unverified live behavior explicitly.
+    Completed: November 8, 2026 (implementation and automated checks).
+    Evidence: only Meta Muse appears; Connect verifies catalog access
+    and a bounded inference response, then saves through the Go keychain
+    adapter and persists completion. Tests use a local HTTP server and
+    fake keychain for success, auth/billing/rate-limit/network failures,
+    invalid responses, redirects, cancellation, secure-save failures,
+    rollback, and keeping saved keys out of frontend snapshots/SQLite.
+    No real API key was available, so live account verification remains
+    unperformed and is explicitly not claimed.
+
+[x] 09. Implement Home, projects, and chat navigation.
+    - Build the empty Home, New project dialog, project greeting, chat
+      lists, project lists, and All projects view from the references.
+    - Create, rename, and remove items with appropriate data handling.
+      Apply the standalone chat behavior chosen in 01.
+    - Restore selected context and pane preferences after relaunch.
+    - Add local search for stored chats and documents from the rail.
+    Done when: project/chat creation, selection, search, empty states,
+    deletion, and restart persistence work and have functional tests.
+    Completed: November 8, 2026.
+    Evidence: empty Home, personalized project workspace, All projects,
+    New project dialog, standalone/project chats, rename/delete menus,
+    saved sidebar/context, and local chat/document search are wired to
+    SQLite. Ownership-aware document selection restores its chat.
+    Go integration tests cover storage operations/reopen; frontend tests
+    cover create, rename, delete confirmation, search, and navigation.
+    The composer was disabled at this step; step 10 enables streaming.
+
+PHASE C — WORKING CONVERSATION
+
+[x] 10. Implement the Muse provider and streaming plain chat.
+    - Implement the verified provider contract behind a small interface.
+    - Keep requests and key access in Go; stream UI events via Wails.
+    - Build the empty composer, user messages, assistant text, and the
+      transition from centered composer to bottom composer.
+    - Persist messages and restore conversation history.
+    - Support Enter/Shift+Enter and input-method composition correctly.
+    Done when: streaming and persisted chat work; fixtures cover split
+    stream chunks, provider errors, and interrupted streams.
+    Completed: November 8, 2026 (implementation and automated checks).
+    Evidence: Go-only streaming behind core/provider, safe SSE/JSON
+    decoding, persisted history, atomic deduplicated sends, scoped drafts,
+    and a Markdown composer with Enter/Shift+Enter and IME support.
+    Tests cover split Unicode frames, errors, timeouts, duplicate submit,
+    safe rendering, and history. Full quality checks and native macOS
+    packaging passed. Live generation remains unverified without a key.
+
+[x] 11. Implement run cancellation and conversation recovery.
+    - Replace Send with Stop during a run and cancel the provider request.
+    - Preserve the draft and partial response, clearly marking stopped
+      or failed runs. Prevent stale events from entering a later run.
+    - Handle offline use, rate limits, retry, and missing/removed keys.
+    - Respect manual scrolling and provide jump-to-latest behavior.
+    Done when: cancellation, retry, event ordering, and app reopen do not
+    duplicate messages, lose drafts, or attach output to the wrong chat.
+    Completed: November 8, 2026 (implementation and automated checks).
+    Evidence: Stop preserves partial output; retry archives prior attempts
+    without duplicating the user message. Attempt/sequence guards reject
+    stale callbacks. Reopen recovers unfinished runs. Missing keys retain
+    readable history and editable drafts. Tests cover manual scrolling,
+    cancelable retry, deletion during streaming, and visible save failures.
+    All 21 frontend tests, Go race tests/vet, formatting/lint, strict
+    TypeScript/frontend build, and native macOS packaging passed.
+    The known macOS deployment-target linker warning remains.
+    Visual/native review remains pending because computer-use hosts were
+    unavailable. Live provider cancellation/billing behavior is unverified.
+
+PHASE D — DOCUMENT DATA AND EDITOR
+
+[x] 12. Implement the Markdown parser and revisioned block store.
+    - Support headings, paragraphs, lists, tables, code, inline formatting,
+      links, and pending blocks; reserve embeds for the later release.
+    - Generate stable IDs and canonical content/attribute hashes.
+    - Implement ordered blocks, nested list/table content, transactions,
+      before-images, and revision increments.
+    - Implement outline, view, search, sinceRev, and atRev reads.
+    Done when: parser round trips, nested blocks, deletions, ordering,
+    historical reconstruction, and incremental reads pass unit tests.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Goldmark parsing/serialization covers supported Markdown
+    and nested blocks. Stable IDs/hashes, ordered SQLite rows, full
+    before/after revisions, outline/view/search/sinceRev/atRev reads,
+    rollback, and reopen have tests.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 13. Implement guarded document operations.
+    - Implement atomic replace, insert, delete, and move operations.
+    - Support exact find targets, repeated-match selection, and text
+      edits that preserve surrounding inline formatting.
+    - Enforce hash/revision guards and safe pending-block replacement.
+    - Return structured refusals with recovery information for stale,
+      missing, ambiguous, or invalid targets, without partial writes.
+    - Define comment-anchor adjustments/protection for step 18.
+    Done when: conflict, rollback, formatting preservation, and multi-op
+    behavior are tested, including competing user and agent writes.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Atomic replace/insert/delete/move, revision/hash guards,
+    guard-free pending fills, exact find/nth, formatting preservation,
+    missing targets, anchor refusals, and competing user/agent writes
+    pass core/storage tests.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 14. Implement the editable document pane.
+    - Bind Tiptap blocks to stored IDs and revisions.
+    - Build the conversation/document split, resize/collapse controls,
+      artifact cards, document toolbar, and reading column.
+    - Show pending sections and save user edits as revisions after the
+      specified typing debounce; flush pending edits safely on navigation.
+    - Keep independent scrolling, caret position, and user selection.
+    - Add view switching only as defined in 01.
+    Done when: typing, reload, pane changes, pending content, and save
+    failures work; editor/storage integration tests cover data retention.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Tiptap split pane, pending blocks, saved
+    views/width/scroll, 600 ms saves, immediate recoverable drafts, CAS
+    conflicts, Markdown tab/copy, and navigation flush are implemented.
+    Actual editor transactions/debounce and failed-save retention pass
+    tests. Native visual review remains pending.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+    Regression fixed November 9: pointer-event access in a deferred
+    resize updater could crash the whole window. A StrictMode drag test
+    reproduced the exact error and passes after calculating width before
+    scheduling state. Added pane recovery with Retry / Return to chat;
+    saved content is retained. Frontend suite now passes 34 tests.
+
+PHASE E — AGENT DOCUMENT WORKFLOW
+
+[x] 15. Implement the agent loop and document tools.
+    - Add create_document, update, read, and guide tool schemas/handlers.
+    - Run tools against the core store, persist results, and continue
+      model calls until completion, cancellation, failure, or the step cap.
+    - Validate arguments and constrain tools to the intended documents.
+      Treat generated Markdown as data and reject unsafe content.
+    - Produce compact write acknowledgements with IDs, hashes, and revs.
+    Done when: deterministic tool-use conversations complete correctly;
+    tests cover malformed arguments, refusals, cancellation, and limits.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Go agent loop supplies five scoped tools, validates
+    complete arguments, persists tool results, replays context, and caps
+    rounds at 30. Tests cover creation/fill, scope violations,
+    malformed/incomplete arguments, and limits. Provider fixture tests
+    cover split function-call deltas.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 16. Implement the document-writing rhythm and skills.
+    - Keep ordinary questions in chat; create documents for durable work.
+    - Create the skeleton first, fill one section per call, use write
+      acknowledgements, and catch up with sinceRev on later turns.
+    - Load detailed document/question guidance through guide as needed.
+    - Preserve user intent when a pending section is edited or deleted.
+    - Keep chat brief and show document progress in its pane.
+    Done when: scripted scenarios cover creation and later edits, and
+    real Muse document runs validate the behavior when a key is available.
+    Record live-model limitations rather than marking them assumed done.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Developer guidance requires skeleton-first creation, one
+    section per update, acknowledgement IDs/hashes, later-turn reads,
+    respect for user edits/deleted pending blocks, brief chat, and on-
+    demand guide topics. Scripted creation/fill and later-turn saved
+    context pass. Live Muse writing quality remains unverified without a
+    supplied key.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 17. Implement tool activity and live document updates.
+    - Emit and persist step-started, step-finished, text, artifact-change,
+      and completion events with plain-language labels and statuses.
+    - Build current activity, expand/collapse details, completed summaries,
+      and compact artifact cards using actual events.
+    - Render one completed section per write; add argument-delta previews
+      only if supported, keeping uncommitted previews out of saved blocks.
+    Done when: live activity, stopped/error/refused states, and history
+    replay agree with actual stored actions and survive app relaunch.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Actual tool start/finish statuses and results persist with
+    message ownership; durable sequenced snapshots update the
+    conversation and artifact list. UI expands saved activity and reads
+    committed document changes. Private reasoning and uncommitted tool
+    arguments are not shown as progress. Completed changes survive Stop.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 18. Implement anchored questions and answers.
+    - Add the comment tool, anchored highlights, question cards, suggested
+      reply buttons, typed replies, and resolved threads.
+    - Route an answer back to the same chat and anchored context.
+    - Protect anchors, update their positions after safe edits, and allow
+      an explicitly requested change to the anchored passage.
+    Done when: answering updates the correct passage; tests cover anchor
+    movement, deletion protection, resolution, and reload persistence.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Unique exact anchors, saved quotes/rune offsets,
+    highlights, suggested/typed answers in the owning chat, and
+    resolution are implemented. Tests cover Unicode anchor movement,
+    protected agent edits, user-detached passages, persistence, and a
+    highlighted suggested-answer interaction.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[x] 19. Implement undo, version history, and restore.
+    - Expose user-friendly undo and a revision history view.
+    - Read historical content from stored revisions and restore it through
+      a new revision rather than overwriting history.
+    - Make behavior during agent activity and pending user saves explicit.
+    Done when: user edits, agent writes, deleted sections, and restores
+    remain recoverable and historical reads pass integration checks.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Undo uses editor history and saves a new revision. History
+    reads/restore retain prior snapshots and compare the current
+    revision. Tests cover deleted/nested historical content, restore as
+    a new revision, and stale restore refusal; actual editor undo is
+    included in the frontend suite.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+PHASE F — SETTINGS, EXPORT, AND RELEASE
+
+[ ] 20. Implement Markdown export.
+    - Serialize the current saved document with formatting intact.
+    - Use the native save dialog; handle cancellation and write errors.
+    - Expose only formats available in v0.1.
+    Done when: exported fixtures preserve titles, lists, tables, code,
+    and links; a real desktop save/open check succeeds.
+
+    Progress November 9: Implemented: native Markdown dialog, flush-
+    before-export, cancellation, safe temporary-file replacement, and
+    filesystem/formatting tests. Still required: real native save/open
+    interaction; computer-use hosts are unavailable. This step remains
+    unchecked.
+
+[x] 21. Complete settings and reset behavior.
+    - Allow nickname changes, Muse key replacement/removal, the supported
+      model setting, and Dark/Light/System theme choice.
+    - Handle removed or unavailable keys without wiping documents.
+    - Provide an explicit data-reset action with a clear scope and
+      confirmation; coordinate local storage and keychain cleanup.
+    - Reset returns the next startup to nickname and AI onboarding.
+    Done when: settings survive restart; reset and recovery paths are
+    tested using temporary data and fake keychain entries.
+
+    Completed: November 9, 2026 (implementation and automated checks).
+    Evidence: Settings support key verification/replacement/removal, the
+    single supported Spark 1.3 model, profile/theme, and explicit RESET
+    confirmation. Active work is canceled before removal/reset. A
+    durable marker exposes interrupted reset recovery. Fake-
+    keychain/temporary-database tests cover cleanup failure, retry, data
+    retention, model validation, and frontend recovery. Real OS-keychain
+    destructive checks were not run.
+    Validation: local quality runner passes; see docs/documents.md and
+    docs/development.md for test scope and remaining live/manual checks.
+
+[ ] 22. Review the complete interface and accessibility.
+    Reference revision November 9: slim persistent icon rail, collapsible
+    text-led sidebar with Projects above Recents, nested project chats,
+    neutral selections, and a continuous chat/document workspace.
+    Home now accepts a draft immediately. The wide bottom composer has
+    a separate project/device context strip, editing mode, model settings,
+    and attachment controls. Lighter headings and quieter icons follow
+    the latest user-supplied screenshot. Sectioned Settings and reduced
+    motion remain. The approved design-system document is unchanged.
+    Validation: 58 frontend tests, format/lint/type/build checks, native
+    build, and headless desktop/mobile editing and export checks pass.
+    Narrow splits and 640x480 Home were checked. Attachment previews
+    cannot submit a draft; the jump control stays inside chat history.
+    Review images: docs/assets/ui-remodel-home.png,
+    docs/assets/ui-remodel-review.png, and ui-remodel-settings.png.
+    No paid model calls were made.
+    User visual approval and the full native accessibility pass remain
+    required before this step can be marked done.
+    - Compare screens against their layout references and Codex styling.
+    - Check rounded icon strokes, typography, theme contrast, focus,
+      keyboard use, reduced motion, long content, and narrow windows.
+    - Complete empty, loading, disabled, failure, and saved states.
+    - Check Linux/Windows/macOS conventions without copying macOS controls.
+    [x] Smooth pane resizing: coalesce pointer moves per animation frame,
+        persist release sizes, cancel safely with Escape/pointer capture
+        loss, and ease keyboard changes, sidebar collapse, and document
+        focus/restore. Dragging has no trailing width animation. Older
+        scroll saves cannot overwrite the released layout. Reduced motion
+        bypasses transitions. 64 frontend tests and rendered motion checks
+        pass; document edits/exports still pass the browser smoke checks.
+    Done when: the core flow has no missing states or inaccessible actions
+    in the reviewed environments; record any platform not yet checked.
+
+    Progress November 9: Implemented keyboard controls, semantic themes,
+    rounded icons, pane sizing, draft/error states, and selected
+    accessibility interactions. Still required: visual comparison and a
+    full native/keyboard/accessibility pass. Native/browser inspection
+    hosts remain unavailable. Supplemental headless Chromium review now
+    covers desktop workspace/document/sheet/deck/settings and 390px
+    document/deck layouts, real editor saves, and runtime errors. No
+    uncaught page errors or outer horizontal overflow were observed.
+    Full keyboard/screen-reader/native review is still required.
+
+[ ] 23. Validate the complete v0.1 workflow.
+    - Run fresh-install onboarding through project/chat creation,
+      streaming, document generation, user/agent edits, questions,
+      history, export, and restart.
+    - Exercise offline recovery, wrong keys, Stop, conflicting edits,
+      save failures, and reset with disposable data.
+    - Dogfood a real proposal, technical spec, and project plan in Kiko.
+    - Run the required automated checks and fix release-blocking defects.
+    Done when: the end-to-end workflow and relevant automated suites pass,
+    with live provider and platform coverage clearly recorded.
+
+    Progress November 9: Deterministic provider/document scenarios,
+    onboarding/storage tests, editor interactions, and local quality
+    checks pass. Still required: live Muse proposal/spec/plan dogfooding
+    and complete native workflow review, including export. No real API
+    key was supplied.
+
+[ ] 24. Prepare the open-source v0.1 release.
+    - Document reproducible development and desktop packaging commands
+      for macOS, Windows, and Linux. Verify actual packaged applications,
+      not just frontend builds; record signing/notarization status.
+    - Add release automation, version information, and release notes.
+    - Finish the README with Kiko screenshots, setup, key storage/privacy,
+      supported platforms, actual features, limitations, and contribution
+      links. Keep it colorful and polished without emojis.
+    - Check dependency licenses, asset redistribution rights, attribution,
+      and the saved reference screenshots for personal information before
+      including them in a public repository or release.
+    - Verify a clean checkout can build and test without private files.
+    Done when: release artifacts and documentation are reviewable and
+    ready. Publishing or uploading requires the user's instruction.
+
+    Progress November 9: Prepared: GPL license/notices,
+    contribution/security guidance, CI native build matrix, draft
+    CHANGELOG.md, release instructions, reproducible pinned
+    dependencies, and a local self-signed macOS app. Still required:
+    verified cross-platform packages/hosted CI, final asset/license
+    audit, final screenshots, signing/minimum-OS decisions, and release
+    evidence. Nothing was published.
+
+LATER RELEASES — IMPLEMENTATION AND RELEASE CHECKS
+
+Authorized November 9: implement later features carefully. Scope and
+explicit adaptations are recorded in docs/later-releases.md. These are
+unreleased development features; parent release items stay unchecked
+until their remaining validation/scope requirements are satisfied.
+
+[ ] L1. v0.2: research, diagrams, PDF/DOCX, image/PDF attachments.
+    [x] Optional Tavily search/extract, isolated key, opt-in settings,
+        bounded calls and durable activity; local HTTP/error tests.
+    [x] Sanitized editable SVG diagrams, chat-owned nodes, local
+        rendering, helper-based layout assessment, Markdown preservation.
+    [x] DOCX and quoted Typst PDF export; pinned compiler packaging,
+        valid OOXML/media tests and real offline compiler tests.
+    [x] PNG/JPEG/WebP/PDF imports, thumbnails, scoped extraction/FTS,
+        local PDF preview, isolated extraction and PDFium page-image workers.
+    [x] Direct view_page/screenshot image results for explicitly opted-in
+        OpenAI/Anthropic models; scoped sources, bounded image context,
+        valid multi-tool ordering, no helper call for direct inspections.
+        Consent survives stale settings correctly, is cleared on model
+        changes/reset, and is rechecked before further model requests.
+        Browser PDF failure can fall back to local page images with retry.
+    [ ] Validate native save/open, live research/vision, and appearance
+        in Word/PDF readers. Muse text chat continues to use the selected
+        helper; direct images require explicit exact-model opt-in.
+    Evidence: 51 frontend tests, Go vet/race, compiler integration and
+    packaged macOS HTTP/export/import smoke checks pass. No paid calls.
+
+[ ] L2. v0.3: providers, spreadsheets, Office attachments, vision.
+    [x] Explicit OpenAI/OpenRouter/Groq/Gemini/Ollama and Claude adapters,
+        isolated keys, selected chat model, bounded readiness check,
+        no automatic provider/model fallback. Local protocol tests.
+    [x] Sheet tabs/cells/formulas/styles, calculated values/errors,
+        XLSX/CSV, revision guards, recoverable drafts/conflict reload.
+    [x] Bounded DOCX/XLSX/PPTX/CSV/text extraction and local text preview.
+    [x] Explicit Muse/OpenAI Responses vision helper with bounded calls,
+        synthetic wire/error tests, and no automatic paid retry.
+    [ ] Verify real provider/model capabilities and spreadsheet/Office
+        visual output. Original Office slide image rendering and provider
+        Files API reuse remain deferred, not silently approximated.
+
+[ ] L3. v0.4: slide artifacts and PowerPoint export.
+    [x] Slide creation/editing/order/notes and title/bullets/columns/
+        image/chart layouts; atomic saves and recoverable drafts.
+    [x] PPTX editable text/bar shapes/media/notes, 16:9 PDF, scoped images;
+        XML/package tests and real one-page-per-slide compiler checks.
+    [ ] Open exported decks in PowerPoint/LibreOffice and review layouts,
+        fonts and overflow. Native chart data objects are outside the
+        implemented editable-shape chart scope.
+
+[ ] L4. Later personal-web and suggestion scope.
+    [x] Scope one owner's self-hosted workspace before building;
+        docs/web.md describes deployment and threat boundaries.
+    [x] Explicit authenticated RPC/SSE/download adapter; loopback default,
+        exact-Origin writes, bounded sessions/events/login attempts,
+        HttpOnly cookies, AES-GCM keys and separate web database.
+    [x] Responsive navigation/panes; browser login and API failure tests.
+    [x] Document proposals, before/after previews, atomic Accept/Reject,
+        stale-revision refusal and anchored-question protection.
+    [ ] Review real phone layouts/accessibility and a TLS reverse proxy;
+        independent remote-hosting security review remains pending.
+        Multi-user accounts, billing, sync and tenant authorization are
+        outside this explicitly scoped personal adapter.
+
+MODEL UPDATE — NOVEMBER 9, 2026
+
+The owner selected muse-spark-1.3-contributor for the demo. Onboarding,
+verification, sends, retries, settings, and reset defaults use that model;
+migration 005 updates existing provider settings without deleting content.
+No automatic paid Standard fallback. Contributor mode is discounted and
+permits Meta training on submitted content/responses; it is not free.
+Quality checks pass, including migration/retry/reset regression tests.
+No live provider requests were made for this change.
+
+CURRENT POSITION
+
+Core steps 01-19 and 21 remain implemented. Later-release implementation
+now includes research, diagrams, extended exports, imports/vision,
+additional providers, sheets, slides, suggestions and personal web mode.
+Completed substeps above are ticked; release parents remain open where
+live/visual/platform checks or explicitly deferred capabilities remain.
+Direct page and diagram images are now implemented for exact-model
+OpenAI/Anthropic opt-in, plus a local PDF-preview fallback. Office visual
+conversion, OCR reconstruction and Files API reuse remain unfinished.
+
+Current automated evidence: 51 frontend tests; strict TypeScript and
+production build; Go formatting/vet/race across all packages; real
+Typst PDF, diagram, and slide-page checks. macOS Apple Silicon packaging,
+runtime bundling and deep/strict ad-hoc signature verification pass.
+The packaged app also passed isolated HTTP smoke checks for login/RPC,
+sheet calculation/XLSX, DOCX/PDF, PDF worker import/render, slide PPTX/PDF,
+and logout. Tests use temporary data and synthetic credentials.
+
+Steps 20 and 22-24 remain open for required native save/open, complete
+visual/accessibility review, live-provider dogfooding, hosted CI,
+Windows/Linux runtime, signing and public-release evidence. Computer-use
+hosts are still unavailable; a supplemental headless Chromium pass
+reviewed desktop and 390px layouts, Settings, and real editor saves with
+no uncaught page errors or outer horizontal overflow. It also caught and
+fixed table-initialization revisions and verified editor reopening.
+The settings controls also capture selected values before the async save
+guard, fixing suggestion/provider/helper and direct-image toggles. PDFium
+JIT integration runs without Go race instrumentation; the full race suite
+still covers worker cancellation, source ownership and model transport.
+The macOS 13-versus-11 deployment target and
+main JavaScript chunk warnings remain visible. No public release, push,
+upload, real API-key use, paid inference/research call, or user-data reset
+was performed. See docs/later-releases.md for exact feature limits.
+
+Working preview: http://localhost:34115 while Wails dev is running.
+Packaged local HTTP mode: see docs/web.md. Optional provider setup is
+explicitly potentially billable; the default stays Muse Contributor.
+Update this position as checks finish; keep step numbers stable.

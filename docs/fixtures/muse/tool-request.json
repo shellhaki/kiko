@@ -1,0 +1,55 @@
+{
+  "model": "muse-spark-1.3-contributor",
+  "messages": [
+    {
+      "role": "developer",
+      "content": "Use read to inspect the document before answering."
+    },
+    {
+      "role": "user",
+      "content": "Read the outline of doc_example."
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "store": false,
+  "max_completion_tokens": 8192,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read",
+        "description": "Read a document projection.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "doc_id": {
+              "type": "string"
+            },
+            "payload": {
+              "type": "object",
+              "properties": {
+                "outline": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "outline"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "doc_id",
+            "payload"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "role": "developer",
+    "content": "Use read to inspect the document before answering."
+  },
+  {
+    "role": "user",
+    "content": "Read the outline of doc_example."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_example",
+        "type": "function",
+        "function": {
+          "name": "read",
+          "arguments": "{\"doc_id\":\"doc_example\",\"payload\":{\"outline\":true}}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_example",
+    "content": "{\"doc_id\":\"doc_example\",\"rev\":1,\"blocks\":[]}"
+  }
+]
