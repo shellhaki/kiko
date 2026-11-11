@@ -20,6 +20,8 @@ Kiko uses GPL-3.0-only. Dependencies retain their respective licenses. This inve
 | @radix-ui/react-dropdown-menu | 2.2.1 | MIT | Frontend runtime |
 | @radix-ui/react-tooltip | 1.4.1 | MIT | Frontend runtime |
 | lucide-react | 1.70.0 | ISC | Frontend runtime |
+| pptxgenjs | 4.0.1 | MIT | Slide generation (editor preview export) |
+| @excalidraw/excalidraw | 0.18.1 | MIT | Diagram drawing board and SVG export; its fonts are copied to `frontend/public/excalidraw` at build |
 | react | 19.3.1 | MIT | Frontend runtime |
 | react-dom | 19.3.1 | MIT | Frontend runtime |
 | react-markdown | 10.1.0 | MIT | Frontend runtime |
@@ -39,6 +41,7 @@ Kiko uses GPL-3.0-only. Dependencies retain their respective licenses. This inve
 | @types/react-dom | 19.3.0 | MIT | Development/test tooling |
 | @vitejs/plugin-react | 6.2.1 | MIT | Development/test tooling |
 | jsdom | 31.0.0 | MIT | Development/test tooling |
+| jszip | 3.10.2 | (MIT OR GPL-3.0-or-later); used under MIT | Development/test tooling |
 | oxlint | 1.92.0 | MIT | Development/test tooling |
 | prettier | 3.9.10 | MIT | Development/test tooling |
 | tailwindcss | 4.3.5 | MIT | Development/test tooling |

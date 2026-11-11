@@ -1,13 +1,23 @@
+import type { ReactNode } from 'react'
 import { DeckEditor } from './DeckEditor'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Download, FileSpreadsheet, Presentation, X } from 'lucide-react'
+import { Check, Copy, Download, FileSpreadsheet, Presentation, X } from 'lucide-react'
 import { desktop } from './api'
-import { Button, Icon, IconButton, PaneHeader } from './components/ui'
+import { Button, Icon, IconButton, PaneHeader, Select } from './components/ui'
 import { registerDocumentSave } from './document-session'
 import type { ArtifactRecord, Workbook, Deck } from './artifact-model'
 import { cellInput, columnName } from './artifact-model'
+import { downloadBlob } from './web-api'
 
-export function ArtifactPane({ id, close }: { id: string; close(): Promise<void> }) {
+export function ArtifactPane({
+  id,
+  close,
+  sourceControls,
+}: {
+  id: string
+  close(): Promise<void>
+  sourceControls?: ReactNode
+}) {
   const [data, setData] = useState<ArtifactRecord>()
   const [error, setError] = useState('')
   useEffect(() => {
@@ -33,13 +43,24 @@ export function ArtifactPane({ id, close }: { id: string; close(): Promise<void>
         <Button onClick={() => void close()}>Return to chat</Button>
       </aside>
     )
-  return <ArtifactEditor key={id} initial={data} close={close} />
+  return <ArtifactEditor key={id} initial={data} close={close} sourceControls={sourceControls} />
 }
-function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): Promise<void> }) {
+function ArtifactEditor({
+  initial,
+  close,
+  sourceControls,
+}: {
+  initial: ArtifactRecord
+  close(): Promise<void>
+  sourceControls?: ReactNode
+}) {
   const [record, setRecord] = useState(initial)
   const [payload, setPayload] = useState(initial.draft?.payload ?? initial.payload)
   const [status, setStatus] = useState(initial.draft ? 'Draft recovered' : 'Saved')
+  const [copied, setCopied] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
+  const [conflicted, setConflicted] = useState(false)
   const [selectedTab, setTab] = useState(0)
   const [rowStart, setRowStart] = useState(0)
   const [columnStart, setColumnStart] = useState(0)
@@ -50,6 +71,7 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
   const dirty = useRef(!!initial.draft)
   const generation = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const saving = useRef<Promise<void> | null>(null)
   const mounted = useRef(true)
@@ -72,6 +94,7 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
             setRecord(saved)
             setStatus(dirty.current ? 'Unsaved changes' : 'Saved')
             setError('')
+            setConflicted(false)
           }
         }
       } catch (problem) {
@@ -79,6 +102,12 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
           setError(String(problem))
           setStatus('Not saved')
         }
+        void desktop()
+          .ReadArtifact(current.current.id)
+          .then((next) => {
+            if (mounted.current && next.rev !== revision.current) setConflicted(true)
+          })
+          .catch(() => {})
         throw problem
       }
     })()
@@ -95,6 +124,7 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
     return () => {
       mounted.current = false
       clearTimeout(timer.current)
+      clearTimeout(copiedTimer.current)
     }
   }, [])
   useEffect(() => {
@@ -150,17 +180,60 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
     change(next)
   }
   const exportFile = async (format: string) => {
+    if (exporting) return
+    setExporting(true)
+    if (mounted.current) setStatus('Preparing export…')
     try {
       await flush()
-      if (await desktop().ExportArtifact(record.id, format, activeTab.name)) setStatus('Exported')
+      if (record.kind === 'deck' && format === 'pptx') {
+        await exportSlides()
+      } else if (await desktop().ExportArtifact(record.id, format, activeTab.name)) {
+        if (mounted.current) setStatus('Exported')
+      }
     } catch (problem) {
-      setError(String(problem))
+      if (mounted.current) setError(String(problem))
+    } finally {
+      if (mounted.current) setExporting(false)
     }
+  }
+  const exportSlides = async () => {
+    const deck = current.current.payload as Deck
+    const files = await desktop().Attachments(record.chatId)
+    const images: Record<string, { mime: string; base64: string }> = {}
+    for (const slide of deck.slides) {
+      if (slide.layout === 'image' && slide.imageId && !images[slide.imageId]) {
+        const file = files.find((entry) => entry.id === slide.imageId)
+        if (!file) throw new Error('Slide image is unavailable.')
+        images[slide.imageId] = {
+          mime: file.mime,
+          base64: await desktop().AttachmentBytes(record.chatId, slide.imageId),
+        }
+      }
+    }
+    const { buildDeckPptx, toBase64 } = await import('./deck-pptx')
+    const bytes = await buildDeckPptx(record.title, deck, images)
+    if (window.kikoWeb) {
+      const name = [...record.title]
+        .map((r) => (r < ' ' || `/\\:*?"<>|`.includes(r) ? '-' : r))
+        .join('')
+      downloadBlob(
+        `${name}.pptx`,
+        bytes,
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      )
+      setStatus('Exported')
+    } else if (await desktop().ExportDeckPptx(record.id, toBase64(bytes))) setStatus('Exported')
   }
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(value.current, null, 2))
+      if (!mounted.current) return
       setStatus('Draft copied')
+      setCopied(true)
+      clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => {
+        if (mounted.current) setCopied(false)
+      }, 1500)
     } catch {
       setError('Select the current values and copy them manually.')
     }
@@ -177,14 +250,20 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
           {status} · rev {record.rev}
         </small>
         <span className="spacer" />
-        <IconButton icon={Copy} label="Copy artifact draft" onClick={() => void copy()} />
+        <IconButton
+          icon={copied ? Check : Copy}
+          label="Copy artifact draft"
+          onClick={() => void copy()}
+        />
         <IconButton
           icon={Download}
           label={record.kind === 'sheet' ? 'Export XLSX' : 'Export PPTX'}
+          disabled={exporting}
           onClick={() => void exportFile(record.kind === 'sheet' ? 'xlsx' : 'pptx')}
         />
         <Button
           variant="ghost"
+          disabled={exporting}
           onClick={() => void exportFile(record.kind === 'sheet' ? 'csv' : 'pdf')}
         >
           {record.kind === 'sheet' ? 'CSV' : 'PDF'}
@@ -193,16 +272,29 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
           icon={X}
           label="Close artifact"
           onClick={() =>
-            void flush()
-              .then(close)
-              .catch(() => {})
+            void flush().then(close, () =>
+              queue.current
+                .catch(() => {})
+                .then(() => {
+                  clearTimeout(timer.current)
+                  return close()
+                }),
+            )
           }
         />
       </PaneHeader>
+      {sourceControls}
       {error && (
         <div className="document-notice" role="alert">
           <p>{error}</p>
-          <Button onClick={() => void flush().catch(() => {})}>Retry save</Button>
+          {!conflicted && <Button onClick={() => void flush().catch(() => {})}>Retry save</Button>}
+          {conflicted && (
+            <p className="field-hint">
+              Copy your draft first — retrying cannot overwrite the newer saved version. If the
+              assistant is still writing, stop it before discarding, or your next edit will conflict
+              again.
+            </p>
+          )}
           <Button
             variant="secondary"
             onClick={async () => {
@@ -226,6 +318,7 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
                 setPayload(next.payload)
                 setTab(0)
                 setError('')
+                setConflicted(false)
                 setStatus('Saved version loaded')
               } catch (problem) {
                 setError(String(problem))
@@ -293,17 +386,18 @@ function ArtifactEditor({ initial, close }: { initial: ArtifactRecord; close(): 
             </Button>
             <label>
               Number format{' '}
-              <select
-                aria-label="Number format"
+              <Select
+                label="Number format"
                 value={activeTab.cells?.[selected]?.format ?? ''}
-                onChange={(event) => format({ format: event.target.value })}
-              >
-                <option value="">General</option>
-                <option value="0.00">Decimal</option>
-                <option value="0%">Percent</option>
-                <option value="$#,##0.00">Currency</option>
-                <option value="yyyy-mm-dd">Date</option>
-              </select>
+                onChange={(formatValue) => format({ format: formatValue })}
+                options={[
+                  { value: '', label: 'General' },
+                  { value: '0.00', label: 'Decimal' },
+                  { value: '0%', label: 'Percent' },
+                  { value: '$#,##0.00', label: 'Currency' },
+                  { value: 'yyyy-mm-dd', label: 'Date' },
+                ]}
+              />
             </label>
             <label>
               Cell fill{' '}

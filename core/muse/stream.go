@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,13 +20,11 @@ import (
 )
 
 type Client struct {
-	ImageInputs   bool
-	Compatibility bool
-	MaxTokens     int
-	HTTP          *http.Client
-	BaseURL       string
-	IdleTimeout   time.Duration
-	RetryBase     time.Duration
+	MaxTokens   int
+	HTTP        *http.Client
+	BaseURL     string
+	IdleTimeout time.Duration
+	RetryBase   time.Duration
 }
 
 func streamError(kind, message string) error { return &provider.Error{Kind: kind, Message: message} }
@@ -41,38 +38,16 @@ func (c Client) Stream(ctx context.Context, input provider.Request, emit func(pr
 	}
 	messages := make([]map[string]any, 0, len(input.Messages))
 	for _, message := range input.Messages {
-		role := message.Role
-		if c.Compatibility && role == "developer" {
-			role = "system"
-		}
-		wire := map[string]any{"role": role, "content": message.Content}
+		wire := map[string]any{"role": message.Role, "content": message.Content}
 		if len(message.ToolCalls) > 0 {
 			wire["tool_calls"] = message.ToolCalls
 		}
 		if message.ToolCallID != "" {
 			wire["tool_call_id"] = message.ToolCallID
 		}
-		if len(message.Images) > 0 {
-			if !c.ImageInputs || role != "user" {
-				return streamError("input", "This provider connection does not accept direct image messages.")
-			}
-			content := []map[string]any{{"type": "text", "text": message.Content}}
-			for _, image := range message.Images {
-				if err := image.Validate(); err != nil {
-					return err
-				}
-				content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + image.MIME + ";base64," + base64.StdEncoding.EncodeToString(image.Data)}})
-			}
-			wire["content"] = content
-		}
 		messages = append(messages, wire)
 	}
 	payload["messages"] = messages
-	if c.Compatibility {
-		payload["max_tokens"] = payload["max_completion_tokens"]
-		delete(payload, "max_completion_tokens")
-		delete(payload, "store")
-	}
 	if len(input.Tools) > 0 {
 		payload["tools"] = input.Tools
 		payload["tool_choice"] = "auto"

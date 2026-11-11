@@ -8,7 +8,12 @@ import { MuseSetup, Nickname, Splash } from './Onboarding'
 import { Workspace } from './Workspace'
 import { flushDocument } from './document-session'
 
-export default function App() {
+export default function App({ splashDuration = 3000 }: { splashDuration?: number } = {}) {
+  const [splashFinished, setSplashFinished] = useState(splashDuration === 0)
+  useEffect(() => {
+    const timer = setTimeout(() => setSplashFinished(true), splashDuration)
+    return () => clearTimeout(timer)
+  }, [splashDuration])
   const [state, setState] = useState<State | null>(null)
   const [loading, setLoading] = useState(true)
   const [needsLogin, setNeedsLogin] = useState(false)
@@ -47,7 +52,7 @@ export default function App() {
   }, [state?.preferences.theme])
   return (
     <UIProvider>
-      {loading ? (
+      {loading || !splashFinished ? (
         <Splash />
       ) : !state && window.kikoWeb && needsLogin ? (
         <WebLogin

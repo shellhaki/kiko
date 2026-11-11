@@ -197,8 +197,10 @@ func (s *Store) CreateDocument(ctx context.Context, chat, title, markdown string
 		if err := writeDocument(ctx, tx, before, doc, author); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO chat_view_state(chat_id,document_id,state) VALUES (?,?,'{}') ON CONFLICT(chat_id) DO UPDATE SET document_id=excluded.document_id,state=json_remove(chat_view_state.state,'$.artifactId')`, chat, doc.ID)
-		return err
+		if documentComplete(doc.Blocks) {
+			return revealDocument(ctx, tx, chat, doc.ID)
+		}
+		return nil
 	})
 	if err == nil {
 		doc.Rev = 1
@@ -213,6 +215,9 @@ func (s *Store) ReadDocument(ctx context.Context, id string, options ReadOptions
 			return err
 		}
 		result.Document = doc
+		if err = refreshSuggestions(ctx, tx, doc); err != nil {
+			return err
+		}
 		result.Suggestions, err = suggestions(ctx, tx, id)
 		if err != nil {
 			return err
@@ -285,6 +290,18 @@ func (s *Store) ReadDocument(ctx context.Context, id string, options ReadOptions
 	})
 	return result, err
 }
+func documentComplete(blocks []document.Block) bool {
+	for _, block := range document.Flatten(blocks) {
+		if block.Type == "pending" {
+			return false
+		}
+	}
+	return true
+}
+func revealDocument(ctx context.Context, tx *sql.Tx, chat, id string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO chat_view_state(chat_id,document_id,state) VALUES (?,?,'{}') ON CONFLICT(chat_id) DO UPDATE SET document_id=excluded.document_id,state=json_remove(chat_view_state.state,'$.artifactId')`, chat, id)
+	return err
+}
 func (s *Store) UpdateDocument(ctx context.Context, id string, ops []document.Operation, author string) (document.Document, error) {
 	var result document.Document
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
@@ -301,6 +318,11 @@ func (s *Store) UpdateDocument(ctx context.Context, id string, ops []document.Op
 		}
 		if err = writeDocument(ctx, tx, before, after, author); err != nil {
 			return err
+		}
+		if documentComplete(after.Blocks) {
+			if err = revealDocument(ctx, tx, before.ChatID, after.ID); err != nil {
+				return err
+			}
 		}
 		after.Rev = before.Rev + 1
 		result = after

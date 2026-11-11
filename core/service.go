@@ -7,6 +7,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"kiko/core/muse"
 	"kiko/core/provider"
 	"kiko/core/storage"
 )
@@ -23,18 +24,18 @@ type ConnectionVerifier interface {
 }
 
 type Service struct {
-	ProviderFactory func(storage.ProviderConfig, int) provider.Provider
-	SecretFor       func(string) Secrets
-	ResearchURL     string
-	VisionURL       string
-	Provider        provider.Provider
-	runMu           sync.Mutex
-	active          map[string]*activeRun
-	closing         bool
-	Store           *storage.Store
-	Keys            Secrets
-	Verifier        ConnectionVerifier
-	mu              sync.Mutex
+	SecretFor   func(string) Secrets
+	ResearchURL string
+	VisionURL   string
+	Provider    provider.Provider
+	fileMu      sync.Mutex
+	runMu       sync.Mutex
+	active      map[string]*activeRun
+	closing     bool
+	Store       *storage.Store
+	Keys        Secrets
+	Verifier    ConnectionVerifier
+	mu          sync.Mutex
 }
 
 func (s *Service) State(ctx context.Context) (storage.State, error) {
@@ -43,15 +44,8 @@ func (s *Service) State(ctx context.Context) (storage.State, error) {
 		return state, errors.New("Couldn’t read local data. Retry without resetting your data.")
 	}
 	if state.Preferences.Stage == "done" {
-		secrets := s.providerSecrets(state.Provider.ID)
-		var key string
-		var err error
-		if secrets != nil {
-			key, err = secrets.Get()
-		} else {
-			err = ErrKeyMissing
-		}
-		state.Connected = state.Provider.ID == "ollama" || err == nil && key != ""
+		key, err := s.Keys.Get()
+		state.Connected = err == nil && key != ""
 		if !state.Connected {
 			if errors.Is(err, ErrKeyMissing) || err == nil {
 				state.ConnectionIssue = "The saved provider key is missing. Open AI settings to reconnect."
@@ -103,7 +97,7 @@ func (s *Service) Connect(ctx context.Context, key string) error {
 		return errors.New("Choose your nickname first.")
 	}
 	key = strings.TrimSpace(key)
-	if err = s.Verifier.Verify(ctx, key, "muse-spark-1.3-contributor"); err != nil {
+	if err = s.Verifier.Verify(ctx, key, muse.DefaultModel); err != nil {
 		return err
 	}
 	old, err := s.Keys.Get()

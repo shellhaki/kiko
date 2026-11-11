@@ -1,15 +1,15 @@
+import { FileCards, WorkspaceFiles } from './ChatFiles'
+import { replyFiles, chatFiles, recentFiles, greeting } from './chat-files'
 import { Attachments } from './Attachments'
-import { flushDocument } from './document-session'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { DeleteApproval } from './DeleteApproval'
+import { flushDocument, registerConversationSave } from './document-session'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
   Folder,
-  Laptop,
-  Server,
   SlidersHorizontal,
-  ShieldCheck,
   LoaderCircle,
   RotateCcw,
   Square,
@@ -19,9 +19,9 @@ import remarkGfm from 'remark-gfm'
 import type { ChatMessage, Run, State } from './api'
 import { desktop } from './api'
 import { mergeMessages, requestId } from './conversation-state'
-import { Brand, Button, Icon, IconButton } from './components/ui'
+import { Brand, Button, CopyButton, Icon, IconButton, Select } from './components/ui'
 
-function Prose({ content }: { content: string }) {
+const Prose = memo(function Prose({ content }: { content: string }) {
   return (
     <Markdown
       remarkPlugins={[remarkGfm]}
@@ -51,7 +51,7 @@ function Prose({ content }: { content: string }) {
       {content}
     </Markdown>
   )
-}
+})
 
 export function Conversation({
   state,
@@ -59,15 +59,15 @@ export function Conversation({
   subtitle,
   onState,
   run,
-  onReconnect,
   onPreferences,
+  onOpenFile,
 }: {
+  onOpenFile?(path: string): void
   state: State
   heading: string
   subtitle: string
   onState(value: State): void
   run: Run
-  onReconnect?(): void
   onPreferences?(): void
 }) {
   const project = state.selection.projectId
@@ -84,13 +84,20 @@ export function Conversation({
   const mounted = useRef(true)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const saveNumber = useRef(0)
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pendingDraft = useRef<(() => void) | null>(null)
   const inFlight = useRef(false)
   const pendingRequest = useRef<{ text: string; id: string } | null>(null)
   const thread = useRef<HTMLDivElement>(null)
+  const automaticScroll = useRef(false)
+  const scrollStarted = useRef(false)
+  const attachmentInput = useRef<HTMLInputElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const follow = useRef(true)
   const composing = useRef(false)
   const activityStamp = useRef('')
+  const folder = state.projects.find((item) => item.id === project)
+  const hasContent = messages.length > 0 || chatFiles(state).length > 0
   const running = messages.find((message) => message.status === 'running')
   const stoppingThisRun = !!running && stopping === `${running.runId}:${running.attempt}`
   const isRunning = !!running
@@ -149,9 +156,45 @@ export function Conversation({
     }, 2000)
     return () => clearInterval(timer)
   }, [isRunning, project, chat])
+  const scrollLatest = useCallback((smooth = true) => {
+    const element = thread.current
+    if (!element) return
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    automaticScroll.current = true
+    if (element.scrollTo)
+      element.scrollTo({
+        top: element.scrollHeight,
+        behavior: smooth && !reduced ? 'smooth' : 'instant',
+      })
+    else {
+      element.scrollTop = element.scrollHeight
+      automaticScroll.current = false
+    }
+  }, [])
+  const interruptScroll = () => {
+    automaticScroll.current = false
+    const element = thread.current
+    if (element?.scrollTo) element.scrollTo({ top: element.scrollTop, behavior: 'instant' })
+    follow.current = false
+    requestAnimationFrame(() => {
+      if (!element || !mounted.current) return
+      follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+      setJump(!follow.current)
+    })
+  }
+  useEffect(() => {
+    const column = thread.current?.firstElementChild
+    if (!column || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (follow.current) scrollLatest()
+    })
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [hasContent, scrollLatest])
   useLayoutEffect(() => {
-    if (follow.current && thread.current) thread.current.scrollTop = thread.current.scrollHeight
-  }, [messages])
+    if (follow.current) scrollLatest(scrollStarted.current)
+    scrollStarted.current = true
+  }, [messages, state.documents.length, state.artifacts?.length, scrollLatest])
   useLayoutEffect(() => {
     if (textarea.current) {
       textarea.current.style.height = 'auto'
@@ -165,18 +208,66 @@ export function Conversation({
     setDraft(value)
     setSaving(true)
     const number = ++saveNumber.current
-    queue.current = queue.current
-      .catch(() => {})
-      .then(() => desktop().SaveDraft(project, chat, value))
-    void queue.current
-      .catch(() => {
-        if (mounted.current)
-          setError('Couldn’t save your draft. Keep this window open and try again.')
-      })
-      .finally(() => {
-        if (mounted.current && saveNumber.current === number) setSaving(false)
-      })
+    if (draftTimer.current) clearTimeout(draftTimer.current)
+    pendingDraft.current = () => {
+      pendingDraft.current = null
+      queue.current = queue.current
+        .catch(() => {})
+        .then(() => desktop().SaveDraft(project, chat, value))
+      void queue.current
+        .catch(() => {
+          if (mounted.current)
+            setError('Couldn’t save your draft. Keep this window open and try again.')
+        })
+        .finally(() => {
+          if (mounted.current && saveNumber.current === number) setSaving(false)
+        })
+    }
+    draftTimer.current = setTimeout(() => pendingDraft.current?.(), 200)
   }
+  const flushDraft = useCallback(async () => {
+    if (draftTimer.current) clearTimeout(draftTimer.current)
+    pendingDraft.current?.()
+    await queue.current
+  }, [])
+  useEffect(() => registerConversationSave(flushDraft), [flushDraft])
+  useEffect(
+    () => () => {
+      if (draftTimer.current) clearTimeout(draftTimer.current)
+      pendingDraft.current?.()
+    },
+    [],
+  )
+
+  const importFile = (name: string, data: string) =>
+    run(async () => {
+      await flushDraft()
+      let nextChat = chat
+      try {
+        if (!nextChat) {
+          const created = await desktop().CreateChat(project)
+          nextChat = created.selection.chatId
+          if (!nextChat) throw new Error('Couldn’t create a chat for this import.')
+          await desktop().SaveDraft('', nextChat, draftValue.current)
+        }
+        await desktop().AttachFile(nextChat, name, data)
+        if (!chat) await desktop().SaveDraft(project, '', '')
+        return await desktop().Bootstrap()
+      } catch (problem) {
+        if (nextChat && !chat) onState(await desktop().Bootstrap())
+        throw problem
+      }
+    })
+  const chooseFolder = () =>
+    run(async () => {
+      await flushDraft()
+      const next = await desktop().ChooseFolder(chat)
+      if (!chat && next.selection.projectId !== project) {
+        await desktop().SaveDraft(next.selection.projectId, '', draftValue.current)
+        return desktop().Bootstrap()
+      }
+      return next
+    })
   const refresh = async () => {
     const value = await desktop().Conversation(project, chat)
     if (mounted.current) setMessages((current) => mergeMessages(current, value.messages))
@@ -193,7 +284,7 @@ export function Conversation({
     const request = pendingRequest.current
     try {
       await flushDocument()
-      await queue.current.catch(() => {})
+      await flushDraft()
       await desktop().SaveDraft(project, chat, draftValue.current)
       const next = await desktop().SendMessage(project, chat, text, request.id)
       draftValue.current = ''
@@ -240,23 +331,39 @@ export function Conversation({
   }
   return (
     <section
-      className={`conversation-shell ${messages.length ? '' : 'empty'}`}
+      className={`conversation-shell ${hasContent ? '' : 'empty'}`}
       aria-label="Conversation"
     >
-      {messages.length === 0 ? (
+      {!hasContent ? (
         <div className="conversation-welcome">
-          <Brand compact />
+          <p className="welcome-greeting">{greeting(state.preferences.nickname)}</p>
           <h1>{heading}</h1>
           {subtitle && <p className="muted">{subtitle}</p>}
+          {recentFiles(state).length > 0 && (
+            <section className="home-recents" aria-label="Recent files">
+              <h2>Recent</h2>
+              <FileCards files={recentFiles(state)} run={run} />
+            </section>
+          )}
         </div>
       ) : (
         <div className="conversation-history">
           <div
             className="conversation-thread"
             ref={thread}
+            onWheel={interruptScroll}
+            onTouchStart={interruptScroll}
+            onPointerDown={interruptScroll}
+            onKeyDown={(event) => {
+              if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key))
+                interruptScroll()
+            }}
             onScroll={(event) => {
               const element = event.currentTarget
-              follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+              const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+              if (automaticScroll.current && !atBottom) return
+              automaticScroll.current = false
+              follow.current = atBottom
               setJump(!follow.current)
             }}
           >
@@ -265,7 +372,7 @@ export function Conversation({
                 <article
                   key={message.id}
                   className={`message ${message.role}`}
-                  aria-label={message.role === 'user' ? 'Your message' : 'Muse reply'}
+                  aria-label={message.role === 'user' ? 'Your message' : 'Kiko reply'}
                 >
                   {message.role === 'assistant' && (
                     <div className="assistant-byline">
@@ -282,17 +389,28 @@ export function Conversation({
                         message.content
                       )
                     ) : message.status === 'running' ? (
-                      <p className="muted">Muse is responding…</p>
+                      <p className="muted">Kiko is responding…</p>
                     ) : null}
                   </div>
+                  {message.role === 'user' && message.content && (
+                    <div className="message-actions">
+                      <CopyButton text={message.content} label="Copy message" />
+                    </div>
+                  )}
+                  {message.role === 'assistant' && (
+                    <FileCards files={replyFiles(state, messages, message)} run={run} />
+                  )}
                   {message.role === 'assistant' && (
                     <div className="reply-footer">
+                      {message.content && (
+                        <CopyButton text={message.content} label="Copy response" />
+                      )}
                       {!!message.steps?.length && (
                         <details className="tool-activity" open={message.status === 'running'}>
                           <summary>
                             {message.status === 'running'
-                              ? 'Working on your document'
-                              : `${message.steps.length} steps completed`}
+                              ? 'Working on your request'
+                              : `${message.steps.length} ${message.steps.length === 1 ? 'step' : 'steps'}`}
                           </summary>
                           <ol>
                             {message.steps.map((step) => (
@@ -343,11 +461,7 @@ export function Conversation({
                       {message.errorKind === 'auth' && (
                         <Button
                           variant="secondary"
-                          onClick={() => {
-                            if (state.provider?.id && state.provider.id !== 'muse' && onReconnect)
-                              onReconnect()
-                            else void run(() => desktop().ReconnectMuse())
-                          }}
+                          onClick={() => void run(() => desktop().ReconnectMuse())}
                         >
                           Reconnect Meta Muse
                         </Button>
@@ -356,6 +470,19 @@ export function Conversation({
                   )}
                 </article>
               ))}
+              {!!replyFiles(state, messages).length && (
+                <section className="chat-file-group" aria-label="Files in this chat">
+                  <h2>Files in this chat</h2>
+                  <FileCards files={replyFiles(state, messages)} run={run} />
+                </section>
+              )}
+              {folder?.root && (
+                <WorkspaceFiles
+                  chat={chat}
+                  onOpen={onOpenFile}
+                  stamp={JSON.stringify(messages.map((message) => message.steps))}
+                />
+              )}
             </div>
           </div>
           {jump && (
@@ -365,7 +492,7 @@ export function Conversation({
               onClick={() => {
                 follow.current = true
                 setJump(false)
-                if (thread.current) thread.current.scrollTop = thread.current.scrollHeight
+                scrollLatest()
               }}
             >
               <Icon icon={ArrowDown} size={14} />
@@ -377,7 +504,7 @@ export function Conversation({
       <div className="composer-dock">
         <div aria-live="polite" className="conversation-status">
           {running
-            ? 'Muse is responding'
+            ? 'Kiko is responding'
             : messages.length > 0
               ? messages.some((message) => message.errorKind === 'storage')
                 ? 'Saving needs attention'
@@ -390,13 +517,7 @@ export function Conversation({
               {state.connectionIssue ||
                 'Reconnect Meta Muse to send messages. Your conversations are still available.'}
             </p>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (state.provider?.id && state.provider.id !== 'muse' && onReconnect) onReconnect()
-                else void run(() => desktop().ReconnectMuse())
-              }}
-            >
+            <Button variant="secondary" onClick={() => void run(() => desktop().ReconnectMuse())}>
               Reconnect Meta Muse
             </Button>
           </div>
@@ -407,14 +528,21 @@ export function Conversation({
           </p>
         )}
         <div className="composer-context">
-          <span className="composer-project">
+          <button
+            type="button"
+            className="composer-project context-button"
+            disabled={sending || isRunning || !!window.kikoWeb}
+            title={
+              window.kikoWeb
+                ? 'Local folder access is available in the desktop app.'
+                : folder?.root || 'Choose a folder to give this chat a project root'
+            }
+            onClick={() => void chooseFolder()}
+          >
             <Icon icon={Folder} size={16} />
-            {state.projects.find((item) => item.id === project)?.name ?? 'Personal workspace'}
-          </span>
-          <span className="composer-device">
-            <Icon icon={window.kikoWeb ? Server : Laptop} size={16} />
-            {window.kikoWeb ? 'This server' : 'This computer'}
-          </span>
+            {folder?.name ?? 'This workspace'}
+            <Icon icon={ChevronDown} size={12} />
+          </button>
           <span className="spacer" />
           {onPreferences && (
             <IconButton
@@ -431,11 +559,17 @@ export function Conversation({
             void send()
           }}
         >
-          <Attachments chat={chat} disabled={sending || isRunning} />
+          <Attachments
+            chat={chat}
+            disabled={sending || isRunning}
+            inputRef={attachmentInput}
+            importFile={importFile}
+          />
           <textarea
             ref={textarea}
             rows={1}
             aria-label="Message"
+            aria-keyshortcuts="Enter Shift+Enter"
             placeholder={state.connected ? 'Ask, plan, create…' : 'Write a draft…'}
             value={draft}
             disabled={sending}
@@ -461,38 +595,20 @@ export function Conversation({
             }}
           />
           <div className="composer-footer">
-            <span
-              className="edit-mode"
-              title={
-                state.preferences.suggestionMode
-                  ? 'Review proposed document changes before applying them'
-                  : 'AI edits are applied directly to your documents'
-              }
-            >
-              <Icon icon={ShieldCheck} size={15} />
-              {state.preferences.suggestionMode ? 'Review edits' : 'Direct edits'}
-            </span>
+            <DeleteApproval chat={state.selection.chatId} />
             <span className="spacer" />
-            <button
-              type="button"
-              className="model-label"
-              aria-label="Model settings"
-              onClick={onReconnect}
-              disabled={!onReconnect}
-              title={state.provider?.model ?? 'Muse Spark 1.3 Contributor'}
-            >
-              {state.provider?.id && state.provider.id !== 'muse'
-                ? state.provider.id
-                : 'Muse Spark'}
-              <span>
-                {' '}
-                ·{' '}
-                {state.provider?.id && state.provider.id !== 'muse'
-                  ? state.provider.model
-                  : '1.3 Contributor'}
-              </span>
-              <Icon icon={ChevronDown} size={12} />
-            </button>
+            <Select
+              className="model-select"
+              label="Model"
+              value={state.model}
+              disabled={!!running || sending}
+              onChange={(model) => void run(() => desktop().SetModel(model))}
+              options={state.models.map((model) => ({
+                value: model.id,
+                label: `${model.name} · ${model.mode === 'contributor' ? 'Contributor' : 'Standard'}`,
+                hint: model.description,
+              }))}
+            />
             <span className="draft-status">{saving ? 'Saving draft…' : ''}</span>
             {running ? (
               <IconButton
@@ -511,7 +627,10 @@ export function Conversation({
             )}
           </div>
         </form>
-        <p className="composer-hint">Muse can make mistakes. Review important details.</p>
+        <p className="composer-hint">
+          Kiko can make mistakes. Review important details. Enter to send · Shift+Enter for a new
+          line.
+        </p>
       </div>
     </section>
   )

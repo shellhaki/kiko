@@ -5,17 +5,21 @@ Authorized November 9, 2026. Existing chat, draft, revision, keychain, and Contr
 | Release | Concrete scope |
 | --- | --- |
 | v0.2 | Tavily search/extract with a separate optional key and saved activity; sanitized static SVG diagrams; DOCX and Typst PDF exports; local image/PDF attachments with extraction/search and explicit model sharing |
-| v0.3 | Explicit provider/model configuration with isolated keys; sheets with cell values/formulas, XLSX/CSV; Office file extraction; an explicitly configured vision helper |
+| v0.3 | Per-chat Muse model choice (originally multi-provider; other providers were removed on November 11, 2026); sheets with cell values/formulas, XLSX/CSV; Office file extraction; a Muse-based vision helper |
 | v0.4 | Editable slide decks with title, bullets, columns, image and chart layouts; PPTX/PDF |
-| Later | Personal self-hosted HTTP adapter, session authentication and server-side encrypted credentials; mobile layouts; guarded document suggestions with accept/reject |
+| Later | Personal self-hosted HTTP adapter, session authentication and server-side encrypted credentials; mobile layouts |
 
 The first web adapter is a personal workspace, bound to loopback by default. Public multi-user hosting, account registration, billing, cloud sync, and team authorization are separate products and are not implied by this scope. Remote hosting requires explicit configuration and TLS at its reverse proxy. Browser clients never receive stored provider keys.
 
-Muse Spark 1.3 Contributor remains the default. Additional providers and Tavily require explicit setup. Switching providers does not happen automatically after an error. Routine tests use synthetic keys, local HTTP servers, temporary storage, and offline format fixtures. No paid inference or research call is part of the normal check command.
+Muse Spark 1.3 Contributor remains the default model and Meta Muse is the only chat provider; other providers (OpenAI, Anthropic, OpenRouter, Groq, Gemini, Ollama) and direct image input were removed on November 11, 2026 and may return later. Tavily requires explicit setup. Kiko never switches models automatically after an error. Routine tests use synthetic keys, local HTTP servers, temporary storage, and offline format fixtures. No paid inference or research call is part of the normal check command.
 
 Unknown or unsupported file content is reported rather than silently discarded. Imports have file, decompression, page, and text limits. Diagrams never execute scripts or load remote resources. Export generation never evaluates model-supplied code. User edits retain their existing revision and draft protection.
 
 Final visual/native inspection, actual external-service behavior, cross-platform runtime checks, signing, and publishing remain distinct from implementation. Keep their missing evidence visible in steps.txt.
+
+## Folder-workspace revision
+
+The owner-directed November 9 change is specified in [folder workspaces](folder-workspaces.md). Selected folders now define project roots, with confined text file tools and per-chat ask/full permissions. Source copies accompany editable artifacts; the database remains responsible for conversations, structured revisions, and drafts. This supersedes earlier statements that projects never map to filesystem folders.
 
 ## Implemented behavior
 
@@ -23,11 +27,11 @@ Research is opt-in under Settings. Saving a Tavily key does not spend credits; e
 
 Attachments are local until a send makes them available to the agent. They are scoped to their chat and limited to 20 MB each and 512 MB stored total. The database stores bytes, extracted page text, FTS entries, and thumbnails transactionally; this supersedes the proposed filesystem-path schema. PDF extraction runs in a bounded child process. PNG/JPEG/WebP images get local thumbnails. PDF preview uses offline pdf.js assets with a local page-image fallback; Office preview shows extracted text, not a reconstruction of its layout. DOCX/PPTX XML, XLSX formulas/values, CSV, and UTF-8 text imports have explicit expansion/text/row limits.
 
-Vision uses a separately selected connected Muse or OpenAI Responses model and a bounded, potentially billable request. It receives an image or the original PDF and returns text. Muse's main chat remains text-only, so its `screenshot` uses that helper for a visual assessment. OpenAI and Anthropic chat models can separately opt into direct images under Settings, for the exact configured model ID. Changing the model clears its consent, including when switching back to an earlier model. Permission lives separately from general preferences so a stale settings save cannot restore it; disabling stops a running image-enabled reply before another model request. For those opted-in models, `view_page` returns a real PDF page or attached image and `screenshot` returns a real diagram image directly to the selected chat model, without a separate helper request. No model capability is guessed or enabled by default.
+Vision uses the connected Muse key and the default model through the Responses endpoint, with a bounded, potentially billable request. It receives an image or the original PDF and returns text. Muse's main chat remains text-only, so `screenshot` and `describe_image` use that helper for a visual assessment. A turn permits at most six visual inspections. Vision errors preserve the source attachment and never switch models.
 
 PDF page images use the embedded PDFium 8111 WebAssembly module via pinned go-pdfium/wazero, inside an isolated child process. Its WASM filesystem is empty, credentials are stripped from the child environment, source input is capped at 20 MB/200 pages, output is capped at 1600×1600 and 4 MB, WASM memory at 512 MB, and parent lifetime at 25 seconds with at most two workers. Rendering does not call a provider. The attachment preview offers local page images when a browser PDF module fails, with page navigation, local zoom, and retry. Pages are selected with 1-based indices and preserve aspect ratio.
 
-Direct images are transient: raw image bytes are not saved in message/activity history. A turn permits at most six visual inspections across direct images and the separately metered helper and retains at most 4 MB of image data in model context; old images can be requested again. All tool results precede the generated image messages so multi-tool batches retain valid protocol ordering. Files and diagrams remain scoped to their owning chat. OpenAI/Anthropic wire behavior and the agent loop have synthetic tests; account/model image support still needs a live check. Original Office slide image rendering, OCR reconstruction, and provider Files API reuse remain deferred. Vision errors preserve the source attachment and never switch providers.
+Rendered images are not saved in message/activity history. Files and diagrams remain scoped to their owning chat. Original Office slide image rendering, OCR reconstruction, and provider Files API reuse remain deferred.
 
 Diagrams use a strict static SVG allowlist; no scripts, CSS, foreignObject, remote assets, or embedded images. The document contains an editable SVG atom and caption. Markdown export preserves the sanitized SVG as inline markup (renderer support varies); PDF includes the SVG, and DOCX includes a PNG rendering. DOCX diagrams require the compiler, while text-only DOCX does not. PDF output uses generated, quoted Typst content; model text is never executable Typst. Setup downloads the pinned compiler and verifies its checksum. There is no inference charge for local exports.
 
@@ -35,6 +39,6 @@ Sheets support up to 20 named tabs, 10,000 populated cells within A1:CV1000, val
 
 Decks support up to 100 slides, title/bullets/columns/image/chart layouts, editable slide text, order, notes, and image attachments. PPTX uses editable text and bar shapes rather than native Excel chart objects. PDF has one 16:9 page per slide. Imported Office media/fonts are not reused automatically, and exported files still need visual checks in Word, PowerPoint, and LibreOffice. Slide length limits reduce overflow but do not certify every font/layout combination.
 
-Suggestion mode stores proposed document operations and before/after previews. Accept rechecks the exact source revision and anchored-question protection before one atomic revision; Reject leaves the document untouched. Accepting one proposal can make another proposal stale. Ask for a fresh suggestion after further edits; there is no automatic merge/rebase.
+Review-gated suggestions were retired: document edits apply directly and there is no proposal queue. The proposals table remains as inert schema with passing tests.
 
 See [web mode](web.md) for the scoped personal adapter, session/key design, deployment configuration, and mobile behavior. The app remains a development build with unreleased later-version features; implementing a feature does not certify a public release.

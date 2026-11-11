@@ -8,12 +8,15 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"kiko/core/muse"
 )
 
 type Project struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Root        string `json:"root,omitempty"`
 }
 type Chat struct {
 	ID        string `json:"id"`
@@ -31,20 +34,20 @@ type Selection struct {
 	ChatID    string `json:"chatId"`
 }
 type State struct {
-	Provider        ProviderConfig   `json:"provider"`
-	Providers       []ProviderConfig `json:"providers"`
-	Artifacts       []Artifact       `json:"artifacts"`
-	ArtifactID      string           `json:"artifactId"`
-	Messages        []Message        `json:"messages"`
-	Draft           string           `json:"draft"`
-	ConnectionIssue string           `json:"connectionIssue,omitempty"`
-	DocumentID      string           `json:"documentId"`
-	Preferences     Preferences      `json:"preferences"`
-	Projects        []Project        `json:"projects"`
-	Chats           []Chat           `json:"chats"`
-	Documents       []Document       `json:"documents"`
-	Selection       Selection        `json:"selection"`
-	Connected       bool             `json:"connected"`
+	Model           string       `json:"model"`
+	Models          []muse.Model `json:"models"`
+	Artifacts       []Artifact   `json:"artifacts"`
+	ArtifactID      string       `json:"artifactId"`
+	Messages        []Message    `json:"messages"`
+	Draft           string       `json:"draft"`
+	ConnectionIssue string       `json:"connectionIssue,omitempty"`
+	DocumentID      string       `json:"documentId"`
+	Preferences     Preferences  `json:"preferences"`
+	Projects        []Project    `json:"projects"`
+	Chats           []Chat       `json:"chats"`
+	Documents       []Document   `json:"documents"`
+	Selection       Selection    `json:"selection"`
+	Connected       bool         `json:"connected"`
 }
 type SearchResult struct {
 	Kind      string `json:"kind"`
@@ -55,20 +58,20 @@ type SearchResult struct {
 }
 
 func (s *Store) Snapshot(ctx context.Context) (State, error) {
-	state := State{Projects: []Project{}, Chats: []Chat{}, Documents: []Document{}}
+	state := State{Projects: []Project{}, Chats: []Chat{}, Documents: []Document{}, Models: muse.Models}
 	prefs, err := s.Preferences(ctx)
 	if err != nil {
 		return state, err
 	}
 	state.Preferences = prefs
 	err = s.Transaction(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT id,name,COALESCE(description,'') FROM projects ORDER BY created_at DESC,id")
+		rows, err := tx.QueryContext(ctx, "SELECT id,name,COALESCE(description,''),COALESCE((SELECT path FROM project_roots WHERE project_id=projects.id),'') FROM projects ORDER BY created_at DESC,id")
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var p Project
-			if err = rows.Scan(&p.ID, &p.Name, &p.Description); err != nil {
+			if err = rows.Scan(&p.ID, &p.Name, &p.Description, &p.Root); err != nil {
 				rows.Close()
 				return err
 			}
@@ -133,10 +136,7 @@ func (s *Store) Snapshot(ctx context.Context) (State, error) {
 	if err == nil {
 		state.Artifacts, err = s.Artifacts(ctx, "")
 		if err == nil {
-			state.Provider, err = s.ChatProvider(ctx, state.Selection.ChatID)
-		}
-		if err == nil {
-			state.Providers, err = s.Providers(ctx)
+			state.Model, err = s.ChatModel(ctx, state.Selection.ChatID)
 		}
 	}
 	return state, err
@@ -168,7 +168,7 @@ func (s *Store) CreateProject(ctx context.Context, name, description string) err
 func (s *Store) CreateChat(ctx context.Context, projectID string) error {
 	id := rand.Text()
 	return s.Transaction(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO chats VALUES (?,NULLIF(?,''),'New chat',(SELECT COALESCE(json_extract(value,'$.providerId'),'muse') FROM (SELECT COALESCE((SELECT value FROM app_settings WHERE key='preferences'),'{}') AS value)),?)", id, projectID, time.Now().UnixMilli()); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO chats VALUES (?,NULLIF(?,''),'New chat','muse',?)", id, projectID, time.Now().UnixMilli()); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE workspace_state SET project_id=NULLIF(?,''),chat_id=? WHERE id=1", projectID, id)

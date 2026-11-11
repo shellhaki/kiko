@@ -57,7 +57,7 @@ After building and bundling the pinned runtime, run:
 node scripts/package-smoke.mjs build/bin/Kiko.app/Contents/MacOS/Kiko
 ```
 
-Use the built executable path on Windows/Linux. This starts `--web` on an ephemeral loopback port with generated synthetic login/vault secrets and a disposable data directory. It checks unauthenticated refusal, login/RPC, sheet calculation/XLSX, document DOCX/PDF, PDF worker import, slide PPTX/PDF, and logout, then stops the process and deletes only that test directory. It never connects a real provider, touches the desktop keychain, or resets normal user data. Format internals and compiler page counts have separate Go tests; this smoke command does not certify native save dialogs or Office appearance.
+Use the built executable path on Windows/Linux. This starts `--web` on an ephemeral loopback port with generated synthetic login/vault secrets and a disposable data directory. It checks unauthenticated refusal, login/RPC, sheet calculation/XLSX, document DOCX/PDF, PDF worker import, slide PDF plus the slide PPTX editor contract, and logout, then stops the process and deletes only that test directory. It never connects a real provider, touches the desktop keychain, or resets normal user data. Format internals and compiler page counts have separate Go tests; this smoke command does not certify native save dialogs or Office appearance.
 
 ## Browser evidence — November 9, 2026
 
@@ -71,8 +71,14 @@ The actual PDFium JIT render fixtures run in a separate non-race Go test invocat
 
 Follow-up browser verification exercised the packaged renderer through a real PDF attachment, switched from browser preview to local page images, checked decoded PNG display, and inspected zoomed output. Desktop and 390px document/deck passes continued without uncaught page errors. This uses disposable sample data and does not certify live model vision or original Office rendering.
 
-Consent tests also cover stale preference saves after revocation, switching back to a previously approved model, independent provider permissions, reset cleanup, and revocation during a running reply before another model request.
+Model tests cover the catalog, per-chat model choice, new chats inheriting the last choice, rejection of unlisted ids, and the migration that retires other providers.
 
 ![Local PDF page preview at 200% using disposable sample data](assets/pdf-page-preview.png)
 
 The visual budget test submits seven helper inspections to a synthetic local endpoint and verifies exactly six helper requests, a saved refusal for the seventh, and a visible limit response for the main model. Direct images and helper calls share this per-turn cap.
+
+## Workspace completion checks — November 9
+
+The frontend suite now includes folder expansion/open/error states, explicit source comparisons and stale-version failures, and text draft recovery/guarded navigation saves. Core tests cover all three custom source formats, path collisions and escapes, existing-file imports, project-Home draft preservation, external reload guards/history, explicit disk-version replacement, and direct writes across artifact import. Source paths survive failed writes.
+
+Supplemental packaged-browser checks used temporary folders and synthetic server credentials. They exercised real directory browsing, text saves, importing Markdown without rewriting the original, project-Home draft preservation, editor-to-source saves, external comparisons/reload/history, explicit conflict resolution, custom document/sheet/deck paths, recovered text drafts after reload, and narrow layouts. Native save/open and screen-reader/platform certification remain separate checks. No paid requests were made.

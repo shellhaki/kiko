@@ -2,11 +2,12 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/xuri/excelize/v2"
 	"strings"
+	"time"
 
 	"kiko/core/deck"
 	"kiko/core/provider"
@@ -14,14 +15,118 @@ import (
 	"kiko/core/storage"
 )
 
+func (s *Service) deleteArtifactTool(ctx context.Context, run storage.Run, call provider.ToolCall) (string, error) {
+	var args struct {
+		DocID      string `json:"doc_id"`
+		ArtifactID string `json:"artifact_id"`
+	}
+	if err := decodeArguments(call.Function.Arguments, &args); err != nil {
+		return "", err
+	}
+	var value any
+	var err error
+	if call.Function.Name == "delete_document" {
+		value, err = s.deleteDocument(ctx, run, args.DocID)
+	} else {
+		value, err = s.deleteArtifact(ctx, run, args.ArtifactID)
+	}
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(value)
+	return string(raw), err
+}
+func (s *Service) deleteDocument(ctx context.Context, run storage.Run, id string) (map[string]string, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("Choose a document to delete.")
+	}
+	var title, chat string
+	err := s.Store.DB().QueryRowContext(ctx, "SELECT title,chat_id FROM documents WHERE id=?", id).Scan(&title, &chat)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("That document does not exist.")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if chat != run.ChatID {
+		return nil, errors.New("That document belongs to another chat.")
+	}
+	if err = s.approveDestructive(ctx, run, title, id, "document"); err != nil {
+		return nil, err
+	}
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err = s.Store.Transaction(saveCtx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(saveCtx, "DELETE FROM workspace_files WHERE source_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(saveCtx, "DELETE FROM workspace_sync_errors WHERE source_id=?", id); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(saveCtx, "DELETE FROM documents WHERE id=?", id)
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return errors.New("That document is already gone.")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"deleted": title}, nil
+}
+func (s *Service) deleteArtifact(ctx context.Context, run storage.Run, id string) (map[string]string, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("Choose a spreadsheet or deck to delete.")
+	}
+	var kind, title, chat string
+	err := s.Store.DB().QueryRowContext(ctx, "SELECT kind,title,chat_id FROM artifacts WHERE id=?", id).Scan(&kind, &title, &chat)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("That spreadsheet or deck does not exist.")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if chat != run.ChatID {
+		return nil, errors.New("That spreadsheet or deck belongs to another chat.")
+	}
+	if err = s.approveDestructive(ctx, run, title, id, kind); err != nil {
+		return nil, err
+	}
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err = s.Store.Transaction(saveCtx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(saveCtx, "DELETE FROM workspace_files WHERE source_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(saveCtx, "DELETE FROM workspace_sync_errors WHERE source_id=?", id); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(saveCtx, "DELETE FROM artifacts WHERE id=?", id)
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return errors.New("That spreadsheet or deck is already gone.")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"deleted": title}, nil
+}
 func artifactTools() []provider.Tool {
 	str := map[string]any{"type": "string"}
 	integer := map[string]any{"type": "integer"}
 	object := map[string]any{"type": "object"}
 	definitions := []provider.ToolDefinition{
-		{Name: "create_sheet", Description: "Create a spreadsheet artifact. tabs is an array of {name,cells:{A1:{value,formula,bold,fill,format}}}. Formulas use Excel syntax; no external/volatile functions.", Parameters: toolSchema(map[string]any{"name": str, "tabs": map[string]any{"type": "array", "items": object}}, "name", "tabs")},
+		{Name: "create_sheet", Description: "Create a spreadsheet artifact. Optional path sets its root-relative .sheet.json source file. tabs is an array of {name,cells:{A1:{value,formula,bold,fill,format}}}. Formulas use Excel syntax; no external/volatile functions.", Parameters: toolSchema(map[string]any{"path": str, "name": str, "tabs": map[string]any{"type": "array", "items": object}}, "name", "tabs")},
 		{Name: "set_cells", Description: "Update named cells atomically in a tab. Requires the current artifact revision; read_range before editing after user changes. Empty cell objects clear values.", Parameters: toolSchema(map[string]any{"artifact_id": str, "tab": str, "cells": object, "ifRev": integer}, "artifact_id", "tab", "cells", "ifRev")},
 		{Name: "read_range", Description: "Read spreadsheet tabs/cells with calculated values. Optional tab filters one tab; ranges use cell addresses.", Parameters: toolSchema(map[string]any{"artifact_id": str, "tab": str, "range": str}, "artifact_id")},
+		{Name: "delete_artifact", Description: "Delete a spreadsheet or slide deck by its artifact_id. Only delete what the user asked to delete. Pauses for user approval; do not claim completion until successful.", Parameters: toolSchema(map[string]any{"artifact_id": str}, "artifact_id")},
 	}
 	result := []provider.Tool{}
 	for _, d := range definitions {
@@ -32,6 +137,7 @@ func artifactTools() []provider.Tool {
 func (s *Service) artifactTool(ctx context.Context, run storage.Run, call provider.ToolCall) (string, error) {
 	if call.Function.Name == "create_sheet" {
 		var args struct {
+			Path string      `json:"path"`
 			Name string      `json:"name"`
 			Tabs []sheet.Tab `json:"tabs"`
 		}
@@ -43,7 +149,8 @@ func (s *Service) artifactTool(ctx context.Context, run storage.Run, call provid
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Spreadsheet %s, rev %d. Use read_range to inspect cells and set_cells with ifRev to update.", record.ID, record.Rev), nil
+		result, _ := json.Marshal(map[string]any{"id": record.ID, "rev": record.Rev, "message": "Use read_range to inspect cells and set_cells with ifRev to update."})
+		return string(result), nil
 	}
 	var args struct {
 		ID    string                `json:"artifact_id"`
@@ -145,7 +252,7 @@ func (s *Service) artifactTool(ctx context.Context, run storage.Run, call provid
 func deckTools() []provider.Tool {
 	str := map[string]any{"type": "string"}
 	definitions := []provider.ToolDefinition{
-		{Name: "create_deck", Description: "Create an editable deck. slides: [{layout:title|bullets|columns|image|chart,title,body:[],left:[],right:[],notes,imageId,chart:{labels:[],values:[]}}]. Keep titles under 100 characters and at most six short points per column.", Parameters: toolSchema(map[string]any{"name": str, "slides": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}, "name", "slides")},
+		{Name: "create_deck", Description: "Create an editable deck. Optional path sets its root-relative .deck.json source file. slides: [{layout:title|bullets|columns|image|chart,title,body:[],left:[],right:[],notes,imageId,chart:{labels:[],values:[]}}]. Keep titles under 100 characters and at most six short points per column.", Parameters: toolSchema(map[string]any{"path": str, "name": str, "slides": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}, "name", "slides")},
 		{Name: "read_deck", Description: "Read a deck’s current slides, IDs and revision before updating it.", Parameters: toolSchema(map[string]any{"artifact_id": str}, "artifact_id")},
 		{Name: "update_slide", Description: "Replace one slide by stable slide_id with ifRev. Preserve unrelated slides and user edits.", Parameters: toolSchema(map[string]any{"artifact_id": str, "slide_id": str, "ifRev": map[string]any{"type": "integer"}, "slide": map[string]any{"type": "object"}}, "artifact_id", "slide_id", "ifRev", "slide")},
 	}
@@ -157,6 +264,7 @@ func deckTools() []provider.Tool {
 }
 func (s *Service) deckTool(ctx context.Context, run storage.Run, call provider.ToolCall) (string, error) {
 	var args struct {
+		Path    string       `json:"path"`
 		Name    string       `json:"name"`
 		ID      string       `json:"artifact_id"`
 		Slides  []deck.Slide `json:"slides"`

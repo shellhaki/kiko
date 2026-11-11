@@ -11,6 +11,91 @@ import (
 )
 
 func markdownPointer(s string) *string { return &s }
+func viewDocument(t *testing.T, s *Store, chat string) string {
+	t.Helper()
+	var id sql.NullString
+	err := s.DB().QueryRowContext(context.Background(), "SELECT document_id FROM chat_view_state WHERE chat_id=?", chat).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id.String
+}
+func pendingBlockID(t *testing.T, s *Store, id string) string {
+	t.Helper()
+	loaded, err := s.ReadDocument(context.Background(), id, ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range document.Flatten(loaded.Document.Blocks) {
+		if block.Type == "pending" {
+			return block.ID
+		}
+	}
+	t.Fatal("no pending block")
+	return ""
+}
+func TestDocumentRevealWaitsForCompletion(t *testing.T) {
+	s, chat := documentStore(t)
+	ctx := context.Background()
+	doc, err := s.CreateDocument(ctx, chat, "Plan", "# Plan\n\n<?kiko block goals?>", map[string]document.Placeholder{"goals": {Type: "pending", Intent: "Goals"}}, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := viewDocument(t, s, chat); view != "" {
+		t.Fatal("incomplete document revealed", view)
+	}
+	pending := pendingBlockID(t, s, doc.ID)
+	if _, err = s.UpdateDocument(ctx, doc.ID, []document.Operation{{Type: "replace", Target: document.Target{IDs: []string{pending}}, Markdown: markdownPointer("## Goals\n\nShip it.")}}, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if view := viewDocument(t, s, chat); view != doc.ID {
+		t.Fatal("completed document not revealed", view)
+	}
+}
+func TestDocumentRevealAtCreateWhenComplete(t *testing.T) {
+	s, chat := documentStore(t)
+	ctx := context.Background()
+	doc, err := s.CreateDocument(ctx, chat, "Plan", "# Plan\n\nDone.", nil, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := viewDocument(t, s, chat); view != doc.ID {
+		t.Fatal("complete document not revealed", view)
+	}
+}
+func TestDocumentRevealFollowsCompletionOrder(t *testing.T) {
+	s, chat := documentStore(t)
+	ctx := context.Background()
+	first, err := s.CreateDocument(ctx, chat, "First", "# First\n\n<?kiko block a?>", map[string]document.Placeholder{"a": {Type: "pending", Intent: "A"}}, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateDocument(ctx, chat, "Second", "# Second\n\n<?kiko block b?>", map[string]document.Placeholder{"b": {Type: "pending", Intent: "B"}}, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := viewDocument(t, s, chat); view != "" {
+		t.Fatal("incomplete documents revealed", view)
+	}
+	fill := func(id string) {
+		pending := pendingBlockID(t, s, id)
+		_, err := s.UpdateDocument(ctx, id, []document.Operation{{Type: "replace", Target: document.Target{IDs: []string{pending}}, Markdown: markdownPointer("Done.")}}, "agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	fill(first.ID)
+	if view := viewDocument(t, s, chat); view != first.ID {
+		t.Fatal("first completion not revealed", view)
+	}
+	fill(second.ID)
+	if view := viewDocument(t, s, chat); view != second.ID {
+		t.Fatal("second completion not revealed", view)
+	}
+}
 func documentStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "docs.db"))

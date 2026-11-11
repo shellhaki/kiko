@@ -115,6 +115,9 @@ func Prepare(blocks []Block) error {
 				if _, err := SanitizeSVG(String(b.Attrs, "svg")); err != nil {
 					return err
 				}
+				if err := ValidateScene(String(b.Attrs, "scene")); err != nil {
+					return err
+				}
 			case "heading":
 				valid = (parent == "" || parent == "listItem" || parent == "cell") && Number(b.Attrs, "level", 0) >= 1 && Number(b.Attrs, "level", 0) <= 6
 			case "paragraph", "code", "pending":

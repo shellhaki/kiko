@@ -38,7 +38,19 @@ var artifactSchema string
 //go:embed migrations/008_suggestions.sql
 var suggestionSchema string
 
-var schemas = []string{initialSchema, conversationSchema, documentDraftSchema, questionSchema, contributorSchema, attachmentSchema, artifactSchema, suggestionSchema}
+//go:embed migrations/009_folder_workspaces.sql
+var folderSchema string
+
+//go:embed migrations/010_workspace_text_drafts.sql
+var workspaceDraftSchema string
+
+//go:embed migrations/011_file_permission_kind.sql
+var filePermissionKindSchema string
+
+//go:embed migrations/012_muse_only.sql
+var museOnlySchema string
+
+var schemas = []string{initialSchema, conversationSchema, documentDraftSchema, questionSchema, contributorSchema, attachmentSchema, artifactSchema, suggestionSchema, folderSchema, workspaceDraftSchema, filePermissionKindSchema, museOnlySchema}
 
 var ErrSchemaTooNew = errors.New("database requires a newer Kiko version")
 

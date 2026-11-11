@@ -16,7 +16,8 @@ func PDF(ctx context.Context, deck Deck, resolveImage func(string) ([]byte, erro
 	}
 	var source strings.Builder
 	assets := map[string][]byte{}
-	source.WriteString("#set page(width: 1280pt, height: 720pt, margin: 0pt, fill: rgb(\"181818\"))\n#set text(size: 22pt, fill: rgb(\"eeeeee\"))\n")
+	palette := []string{"7950cc", "2f7d62", "3e6fb0", "c77e1f", "b42332"}
+	source.WriteString("#set page(width: 1280pt, height: 720pt, margin: 0pt, fill: rgb(\"ffffff\"))\n#set text(size: 22pt, fill: rgb(\"333333\"))\n")
 	place := func(x, y, w, h int, body string) {
 		fmt.Fprintf(&source, "#place(top + left, dx: %dpt, dy: %dpt)[#block(width: %dpt, height: %dpt)[%s]]\n", x, y, w, h, body)
 	}
@@ -37,12 +38,13 @@ func PDF(ctx context.Context, deck Deck, resolveImage func(string) ([]byte, erro
 		if i > 0 {
 			source.WriteString("#pagebreak()\n")
 		}
+		place(0, 0, 1280, 10, "#rect(width: 1280pt, height: 10pt, fill: rgb(\"7950cc\"), stroke: none)")
 		if slide.Layout != "title" {
 			place(60, 45, 1160, 120, "#strong["+text(slide.Title, 32)+"]")
 		}
 		switch slide.Layout {
 		case "title":
-			place(80, 180, 1120, 180, "#strong["+text(slide.Title, 44)+"]")
+			place(80, 180, 1120, 180, "#text(fill: rgb(\"6d3fc0\"))[#strong["+text(slide.Title, 44)+"]]")
 			for j, line := range slide.Body {
 				place(80, 390+j*40, 1120, 45, text(line, 22))
 			}
@@ -77,7 +79,7 @@ func PDF(ctx context.Context, deck Deck, resolveImage func(string) ([]byte, erro
 				x := 90 + int(float64(index)*step)
 				y := 210 + int((high-value)/(high-low)*330)
 				height := max(1, int(math.Abs(float64(y-zero))))
-				place(x, min(y, zero), int(step*.67), height, fmt.Sprintf("#rect(width: %dpt, height: %dpt, fill: rgb(\"7950cc\"), stroke: none)", int(step*.67), height))
+				place(x, min(y, zero), int(step*.67), height, fmt.Sprintf("#rect(width: %dpt, height: %dpt, fill: rgb(\"%s\"), stroke: none)", int(step*.67), height, palette[index%len(palette)]))
 				place(x, 565, int(step*.9), 100, text(slide.Chart.Labels[index], 10))
 				place(x, min(y, zero)-25, int(step*.9), 25, text(strconv.FormatFloat(value, 'f', -1, 64), 12))
 			}

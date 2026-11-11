@@ -111,6 +111,28 @@ func TestPDFWithStaticDiagram(t *testing.T) {
 	}
 }
 
+func TestPDFAndDocxWithExcalidrawDiagram(t *testing.T) {
+	if os.Getenv("KIKO_TYPST_BINARY") == "" {
+		t.Skip("bundled compiler integration")
+	}
+	source, err := os.ReadFile("../document/testdata/excalidraw-export.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg, err := document.SanitizeSVG(string(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := document.Document{Title: "Flow", Blocks: []document.Block{{Type: "embed", Attrs: map[string]any{"ref": "drawn", "svg": svg, "caption": "Client to server"}}}}
+	pdf, err := PDF(context.Background(), doc)
+	if err != nil || !bytes.HasPrefix(pdf, []byte("%PDF-")) {
+		t.Fatal("PDF rejected the Excalidraw export", err)
+	}
+	if _, err = Docx(doc); err != nil {
+		t.Fatal("DOCX rejected the Excalidraw export", err)
+	}
+}
+
 func TestDocxDiagramIncludesRenderedMedia(t *testing.T) {
 	if os.Getenv("KIKO_TYPST_BINARY") == "" {
 		t.Skip("bundled compiler integration")

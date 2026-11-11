@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { PDFPageImage } from './PDFPageImage'
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { FileText, Plus, Trash2 } from 'lucide-react'
@@ -7,7 +7,17 @@ import type { Attachment } from './api'
 import { Button, Dialog, Icon, IconButton } from './components/ui'
 
 const PDFViewer = lazy(() => import('./PDFViewer'))
-export function Attachments({ chat, disabled }: { chat: string; disabled: boolean }) {
+export function Attachments({
+  chat,
+  disabled,
+  inputRef,
+  importFile,
+}: {
+  chat: string
+  disabled: boolean
+  inputRef?: RefObject<HTMLInputElement | null>
+  importFile?: (name: string, data: string) => Promise<boolean>
+}) {
   const [files, setFiles] = useState<Attachment[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -20,7 +30,8 @@ export function Attachments({ chat, disabled }: { chat: string; disabled: boolea
     image: string
     pdf?: string
   } | null>(null)
-  const input = useRef<HTMLInputElement>(null)
+  const localInput = useRef<HTMLInputElement>(null)
+  const input = inputRef ?? localInput
   const refresh = useCallback(() => {
     if (chat)
       void desktop()
@@ -30,7 +41,7 @@ export function Attachments({ chat, disabled }: { chat: string; disabled: boolea
   }, [chat])
   useEffect(refresh, [refresh])
   const upload = async (file: File) => {
-    if (!chat) return
+    if (!chat && !importFile) return
     if (file.size > 20 * 1024 * 1024) {
       setError('Choose a file up to 20 MB.')
       return
@@ -44,7 +55,8 @@ export function Attachments({ chat, disabled }: { chat: string; disabled: boolea
         reader.onerror = () => reject(new Error('Couldn’t read this file.'))
         reader.readAsDataURL(file)
       })
-      await desktop().AttachFile(chat, file.name, encoded)
+      if (importFile) await importFile(file.name, encoded)
+      else await desktop().AttachFile(chat, file.name, encoded)
       refresh()
     } catch (problem) {
       setError(String(problem))
@@ -78,13 +90,14 @@ export function Attachments({ chat, disabled }: { chat: string; disabled: boolea
       <div className="attachment-controls">
         <IconButton
           icon={Plus}
-          label={!chat ? 'Start a chat to attach files' : busy ? 'Importing file' : 'Attach file'}
-          disabled={!chat || disabled || busy}
+          label={busy ? 'Importing file' : 'Attach file'}
+          disabled={(!chat && !importFile) || disabled || busy}
           onClick={() => input.current?.click()}
         />
         <input
           ref={input}
           type="file"
+          disabled={disabled || busy}
           hidden
           aria-label="Choose attachment"
           accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.xlsx,.pptx,.csv,.md,.txt,.go,.js,.ts,.tsx,.py,.rs,.json,.yaml,.sql,.css"
@@ -100,7 +113,7 @@ export function Attachments({ chat, disabled }: { chat: string; disabled: boolea
               ? `${files.length} attached · available to the model on send`
               : chat
                 ? 'Images, PDF, Office, or text'
-                : 'Start a chat to attach files'}
+                : 'Import files into a new chat'}
         </small>
       </div>
       {files.length > 0 && (

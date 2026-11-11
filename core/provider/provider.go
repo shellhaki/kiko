@@ -21,7 +21,6 @@ type ToolDelta struct {
 	Arguments string `json:"arguments"`
 }
 type Message struct {
-	Images     []Image    `json:"-"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`

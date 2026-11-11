@@ -4,5 +4,6 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  test: { environment: 'jsdom' },
+  define: { 'process.env.IS_PREACT': JSON.stringify('false') },
+  test: { environment: 'jsdom', server: { deps: { inline: [/@excalidraw/, /open-color/] } } },
 })

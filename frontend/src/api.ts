@@ -2,7 +2,14 @@ import { webBackend } from './web-api'
 import type { ArtifactRecord } from './artifact-model'
 import type { Block, DocumentRead, DocumentView, SavedDocument } from './document-model'
 export type ChatMessage = {
-  steps?: { id: string; tool: string; label: string; status: string; detail?: unknown }[]
+  steps?: {
+    id: string
+    tool: string
+    label: string
+    status: string
+    outputId?: string
+    detail?: unknown
+  }[]
   id: string
   chatId: string
   role: 'user' | 'assistant'
@@ -17,11 +24,14 @@ export type ChatMessage = {
   previous: { content: string; status: string; error: string }[]
 }
 export type ConversationData = { messages: ChatMessage[]; draft: string }
+export type MuseModel = {
+  id: string
+  name: string
+  mode: 'standard' | 'contributor'
+  description: string
+}
 export type Preferences = {
-  imageModels?: Record<string, string>
   suggestionMode?: boolean
-  providerId?: string
-  visionProviderId?: string
   tavilyEnabled?: boolean
   nickname: string
   stage: 'nickname' | 'muse' | 'done'
@@ -30,12 +40,12 @@ export type Preferences = {
   sidebarWidth: number
   resetInProgress: boolean
 }
-export type Project = { id: string; name: string; description: string }
+export type Project = { id: string; name: string; description: string; root?: string }
 export type Chat = { id: string; projectId: string; title: string }
 export type Document = { id: string; chatId: string; projectId: string; title: string }
 export type State = {
-  provider?: { id: string; format: string; baseURL: string; model: string }
-  providers?: { id: string; format: string; baseURL: string; model: string }[]
+  model: string
+  models: MuseModel[]
   artifacts?: ArtifactRecord[]
   artifactId?: string
   messages: ChatMessage[]
@@ -75,17 +85,77 @@ export type Attachment = {
   size: number
   pages: number
 }
+export type WorkspaceFile = { chatId: string; path: string; sourceId: string; hash: string }
+export type FilePermission = {
+  id: string
+  chatId: string
+  path: string
+  content: string
+  kind: string
+}
+export type WorkspaceEntry = {
+  path: string
+  content: string
+  hash: string
+  sourceId: string
+  chatId: string
+  kind: string
+  draft?: { content: string; baseHash: string }
+}
+export type WorkspaceSource = {
+  id: string
+  chatId: string
+  kind: string
+  title: string
+  path: string
+  rev: number
+  content: string
+  diskContent: string
+  diskHash: string
+  status: 'unlinked' | 'synced' | 'changed' | 'pending' | 'missing' | 'unavailable'
+  issue: string
+  draft: boolean
+  running: boolean
+}
 export type Backend = {
-  SetDirectImages(id: string, enabled: boolean): Promise<State>
+  ListWorkspaceDirectory(
+    project: string,
+    path: string,
+  ): Promise<{ name: string; directory: boolean }[]>
+  ReadWorkspaceEntry(project: string, path: string): Promise<WorkspaceEntry>
+  SaveWorkspaceTextDraft(
+    project: string,
+    path: string,
+    hash: string,
+    content: string,
+  ): Promise<void>
+  SaveWorkspaceText(
+    project: string,
+    chat: string,
+    path: string,
+    hash: string,
+    content: string,
+  ): Promise<WorkspaceEntry>
+  DiscardWorkspaceTextDraft(project: string, path: string, hash: string): Promise<void>
+  ImportWorkspaceFile(project: string, chat: string, path: string, hash: string): Promise<State>
+  SaveWorkspaceSourceVersion(id: string, hash: string, rev: number): Promise<State>
+  WorkspaceSource(id: string): Promise<WorkspaceSource | null>
+  ReloadWorkspaceSource(id: string, hash: string, rev: number): Promise<State>
+  CreateArtifactAt(chat: string, kind: string, title: string, path: string): Promise<State>
+  SetArtifactPath(chat: string, id: string, path: string): Promise<State>
+  WorkspaceIssues(chat: string): Promise<{ sourceId: string; message: string }[]>
+  RetryWorkspaceSync(chat: string, source: string): Promise<void>
+  ChooseFolder(chat: string): Promise<State>
+  WorkspaceFiles(chat: string): Promise<WorkspaceFile[]>
+  FilePermissions(chat: string): Promise<FilePermission[]>
+  ResolveFilePermission(id: string, approved: boolean): Promise<void>
+  ReadWorkspaceFile(
+    chat: string,
+    path: string,
+  ): Promise<{ path: string; content: string; hash: string }>
+
   RenderAttachmentPage(chat: string, id: string, page: number): Promise<string>
-  SetSuggestionMode(enabled: boolean): Promise<State>
-  AcceptSuggestion(id: string): Promise<SavedDocument>
-  RejectSuggestion(id: string): Promise<void>
   CreateDeck(chat: string, title: string): Promise<State>
-  ConfigureProvider(id: string, model: string, key: string, endpoint: string): Promise<State>
-  SelectProvider(id: string): Promise<State>
-  SetVisionProvider(id: string): Promise<State>
-  RemoveProviderKey(id: string): Promise<State>
   ReadArtifact(id: string): Promise<ArtifactRecord>
   SaveArtifact(id: string, rev: number, payload: unknown): Promise<ArtifactRecord>
   DiscardArtifactDraft(id: string): Promise<void>
@@ -94,6 +164,7 @@ export type Backend = {
   CloseArtifact(): Promise<State>
   CreateSheet(chat: string, title: string): Promise<State>
   ExportArtifact(id: string, format: string, tab: string): Promise<boolean>
+  ExportDeckPptx(id: string, encoded: string): Promise<boolean>
   AttachmentBytes(chat: string, id: string): Promise<string>
   ValidateDiagram(code: string): Promise<string>
   AttachFile(chat: string, name: string, data: string): Promise<Attachment>

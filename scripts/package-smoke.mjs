@@ -125,7 +125,12 @@ try {
     "PDF worker did not return an actual PNG page",
   );
   const deck = (await rpc("CreateDeck", chat, "Offline slides")).artifactId;
-  await download("artifact", deck, "pptx");
+  const slides = await request(
+    "/api/export?" +
+      new URLSearchParams({ kind: "artifact", id: deck, format: "pptx" }),
+  );
+  assert.equal(slides.status, 400);
+  assert.match(await slides.text(), /editor preview/);
   await download("artifact", deck, "pdf");
   assert.equal((await request("/api/logout", {})).status, 204);
   assert.equal(
@@ -133,7 +138,7 @@ try {
     401,
   );
   console.log(
-    "Packaged smoke passed: session/RPC, sheets/XLSX, documents/DOCX/PDF, isolated PDF import/render, slides/PPTX/PDF, logout. No paid requests.",
+    "Packaged smoke passed: session/RPC, sheets/XLSX, documents/DOCX/PDF, isolated PDF import/render, slides/PDF + PPTX editor contract, logout. No paid requests.",
   );
 } finally {
   const exited = once(processHandle, "exit");

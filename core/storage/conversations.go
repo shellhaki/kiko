@@ -38,18 +38,18 @@ type Conversation struct {
 	Draft    string    `json:"draft"`
 }
 type Run struct {
-	ID, ChatID, ProjectID, UserID, AssistantID, Model, Status, ProviderID string
-	Attempt                                                               int
+	ID, ChatID, ProjectID, UserID, AssistantID, Model, Status string
+	Attempt                                                   int
 }
 
 const messageSQL = `SELECT m.id,m.chat_id,m.role,COALESCE(m.content,''),COALESCE(m.ordinal,0),COALESCE(r.id,''),COALESCE(r.status,'complete'),COALESCE(r.error,''),COALESCE(r.error_kind,''),COALESCE(r.sequence,0),COALESCE(r.attempt,0),COALESCE(r.previous_attempts,'[]') FROM messages m LEFT JOIN chat_runs r ON r.assistant_message_id=m.id `
-const runSQL = `SELECT r.id,r.chat_id,COALESCE(c.project_id,''),r.user_message_id,r.assistant_message_id,r.model,r.status,r.attempt,c.provider_id FROM chat_runs r JOIN chats c ON c.id=r.chat_id `
+const runSQL = `SELECT r.id,r.chat_id,COALESCE(c.project_id,''),r.user_message_id,r.assistant_message_id,r.model,r.status,r.attempt FROM chat_runs r JOIN chats c ON c.id=r.chat_id `
 
 type scanner interface{ Scan(...any) error }
 
 func scanRun(row scanner) (Run, error) {
 	var r Run
-	err := row.Scan(&r.ID, &r.ChatID, &r.ProjectID, &r.UserID, &r.AssistantID, &r.Model, &r.Status, &r.Attempt, &r.ProviderID)
+	err := row.Scan(&r.ID, &r.ChatID, &r.ProjectID, &r.UserID, &r.AssistantID, &r.Model, &r.Status, &r.Attempt)
 	return r, err
 }
 func scanMessage(row scanner) (Message, error) {
@@ -149,11 +149,11 @@ func (s *Store) StartRun(ctx context.Context, project, chat, text, requestID str
 		scope := draftScope(project, chat)
 		if chat == "" {
 			chat = rand.Text()
-			if _, err = tx.ExecContext(ctx, "INSERT INTO chats VALUES (?,NULLIF(?,''),'New chat',(SELECT COALESCE(json_extract(value,'$.providerId'),'muse') FROM (SELECT COALESCE((SELECT value FROM app_settings WHERE key='preferences'),'{}') AS value)),?)", chat, project, time.Now().UnixMilli()); err != nil {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO chats VALUES (?,NULLIF(?,''),'New chat','muse',?)", chat, project, time.Now().UnixMilli()); err != nil {
 				return err
 			}
 		}
-		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(c.project_id,''),p.model,c.provider_id FROM chats c JOIN providers p ON p.id=c.provider_id WHERE c.id=?`, chat).Scan(&project, &run.Model, &run.ProviderID); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(c.project_id,''),m.model FROM chats c JOIN chat_models m ON m.chat_id=c.id WHERE c.id=?`, chat).Scan(&project, &run.Model); err != nil {
 			return err
 		}
 		var active int
@@ -247,7 +247,7 @@ func (s *Store) RetryRun(ctx context.Context, id, requestID string) (Run, bool, 
 		if err != nil {
 			return err
 		}
-		if err = tx.QueryRowContext(ctx, "SELECT p.model FROM providers p JOIN chats c ON c.provider_id=p.id WHERE c.id=?", run.ChatID).Scan(&run.Model); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT model FROM chat_models WHERE chat_id=?", run.ChatID).Scan(&run.Model); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE chat_runs SET status='running',model=?,error='',error_kind='',attempt=attempt+1,sequence=sequence+1,previous_attempts=?,usage=NULL,updated_at=? WHERE id=?`, run.Model, string(data), time.Now().UnixMilli(), id); err != nil {
@@ -318,4 +318,11 @@ func (s *Store) UpdateRun(ctx context.Context, run Run, content, status, detail,
 		return err
 	})
 	return message, err
+}
+
+func (s *Store) Run(ctx context.Context, id string) (Run, error) {
+	if id == "" {
+		return Run{}, errors.New("missing run")
+	}
+	return scanRun(s.db.QueryRowContext(ctx, runSQL+"WHERE r.id=?", id))
 }

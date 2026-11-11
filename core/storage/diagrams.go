@@ -8,8 +8,8 @@ import (
 	"kiko/core/document"
 )
 
-func (s *Store) CreateDiagram(ctx context.Context, id, code, caption, after string) (document.Document, error) {
-	sanitized, err := document.SanitizeSVG(code)
+func (s *Store) CreateDiagram(ctx context.Context, id string, elements []document.Element, caption, after string) (document.Document, error) {
+	scene, sanitized, err := document.DrawDiagram(elements)
 	if err != nil {
 		return document.Document{}, err
 	}
@@ -33,7 +33,7 @@ func (s *Store) CreateDiagram(ctx context.Context, id, code, caption, after stri
 				return document.Refuse("block_gone", "The diagram destination no longer exists.", before, nil)
 			}
 		}
-		block := document.Block{ID: rand.Text() + ".1", Type: "embed", Attrs: map[string]any{"ref": rand.Text(), "svg": sanitized, "caption": caption}}
+		block := document.Block{ID: rand.Text() + ".1", Type: "embed", Attrs: map[string]any{"ref": rand.Text(), "svg": sanitized, "scene": scene, "caption": caption}}
 		next.Blocks = append(append(append([]document.Block{}, next.Blocks[:index]...), block), next.Blocks[index:]...)
 		if err = writeDocument(ctx, tx, before, next, "agent"); err != nil {
 			return err

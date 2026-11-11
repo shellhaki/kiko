@@ -1,3 +1,7 @@
+import { FolderExplorer } from './FolderExplorer'
+import { WorkspaceFilePane } from './WorkspaceFilePane'
+import { SourceStatus } from './SourceStatus'
+import { SettingsPage } from './SettingsPage'
 import { useMobile } from './use-mobile'
 import { usePaneResize } from './use-pane-resize'
 import { ArtifactPane } from './ArtifactPane'
@@ -12,10 +16,6 @@ import {
   ChevronRight,
   Home,
   FolderOpen,
-  SlidersHorizontal,
-  Cpu,
-  Globe,
-  Database,
   FileText,
   Folder,
   Layers,
@@ -23,12 +23,11 @@ import {
   PanelLeft,
   Plus,
   Search,
-  Settings2,
   SquarePen,
 } from 'lucide-react'
 import type { Run, SearchResult, State } from './api'
 import { desktop } from './api'
-import { Brand, Button, Dialog, Field, Icon, IconButton, ItemMenu, NavRow } from './components/ui'
+import { Button, Dialog, Field, Icon, IconButton, ItemMenu, NavRow, Select } from './components/ui'
 
 type Props = {
   onState(value: State): void
@@ -39,8 +38,8 @@ type Props = {
 }
 type EditTarget = { kind: 'chat' | 'project'; id: string; title: string; mode: 'rename' | 'delete' }
 
-export function Workspace({ state, busy, error, run, onState }: Props) {
-  const [projectOpen, setProjectOpen] = useState(false)
+export function Workspace({ state, busy, error, run: perform, onState }: Props) {
+  const [fileError, setFileError] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState('General')
@@ -54,6 +53,19 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
     window.addEventListener('keydown', searchShortcut)
     return () => window.removeEventListener('keydown', searchShortcut)
   }, [])
+  const [file, setFile] = useState<{ project: string; path: string } | null>(null)
+  const run: Run = (operation) =>
+    perform(async () => {
+      const next = await operation()
+      if (
+        next.documentId ||
+        next.artifactId ||
+        next.selection.projectId !== state.selection.projectId ||
+        next.selection.chatId !== state.selection.chatId
+      )
+        setFile(null)
+      return next
+    })
   const [allProjects, setAllProjects] = useState(false)
   const [editing, setEditing] = useState<EditTarget | null>(null)
   const project = state.projects.find((p) => p.id === state.selection.projectId)
@@ -76,12 +88,15 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
   const select = async (projectId: string, chatId = '') => {
     if (await run(() => desktop().Select(projectId, chatId))) {
       setAllProjects(false)
+      setFile(null)
       if (mobile) void appearance(false)
     }
   }
   const createChat = () => {
     setAllProjects(false)
-    void run(() => desktop().CreateChat(project?.id ?? ''))
+    void run(() => desktop().CreateChat(project?.id ?? '')).then((ok) => {
+      if (ok) setFile(null)
+    })
   }
   const appearance = (open: boolean, size = width, theme = preferences.theme) =>
     run(() => desktop().SaveAppearance(theme, open, size))
@@ -99,13 +114,35 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
   const [documentOpen, setDocumentOpen] = useState(false)
   const [createKind, setCreateKind] = useState('document')
   const [resetOpen, setResetOpen] = useState(false)
-  const [replacementKey, setReplacementKey] = useState('')
-  const [researchKey, setResearchKey] = useState('')
-  const [providerID, setProviderID] = useState('openai')
-  const [providerModel, setProviderModel] = useState('')
-  const [providerKey, setProviderKey] = useState('')
-  const [providerEndpoint, setProviderEndpoint] = useState('http://127.0.0.1:11434/v1')
-  const [showKey, setShowKey] = useState(false)
+  const openFile = async (path: string) => {
+    if (!project) return
+    let plain = false
+    setFileError('')
+    if (
+      await run(async () => {
+        const entry = await desktop()
+          .ReadWorkspaceEntry(project.id, path)
+          .catch((problem) => {
+            setFileError(String(problem instanceof Error ? problem.message : problem))
+            throw problem
+          })
+        if (entry.sourceId)
+          return desktop().ImportWorkspaceFile(project.id, chat?.id ?? '', path, entry.hash)
+        plain = true
+        if (state.documentId) await desktop().CloseDocument()
+        if (state.artifactId) await desktop().CloseArtifact()
+        return desktop().Bootstrap()
+      })
+    ) {
+      setFile(plain ? { project: project.id, path } : null)
+      setAllProjects(false)
+      if (mobile) void appearance(false)
+    }
+  }
+  const closeFile = () =>
+    void run(() => desktop().Bootstrap()).then((ok) => {
+      if (ok) setFile(null)
+    })
   const rowActions = (kind: 'chat' | 'project', id: string, title: string) => (
     <ItemMenu
       label={title}
@@ -177,132 +214,135 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
         </nav>
         <div
           className="workspace-navigation"
+          inert={!preferences.sidebarOpen}
+          aria-hidden={!preferences.sidebarOpen}
           data-resizing={sidebarResize.active || undefined}
           style={{ width: preferences.sidebarOpen ? width : 0 }}
         >
-          {preferences.sidebarOpen && (
-            <>
-              <aside className="sidebar" style={{ width }} aria-label="Chats and projects">
-                <div className="sidebar-heading">
-                  <span className="sidebar-wordmark">Kiko</span>
-                  <IconButton icon={Search} label="Search" onClick={() => setSearchOpen(true)} />
-                </div>
-                <Button
-                  className="new-chat"
-                  data-new-chat
-                  variant="ghost"
-                  onClick={createChat}
-                  disabled={busy}
-                >
-                  <Icon icon={SquarePen} /> New chat
-                </Button>
-                <div className="sidebar-scroll">
-                  <div className="sidebar-group">
-                    <div className="sidebar-section-heading">
-                      <h2>Projects</h2>
-                      <IconButton
-                        icon={Plus}
-                        label="New project"
-                        onClick={() => setProjectOpen(true)}
-                      />
-                    </div>
-                    {state.projects.map((p) => (
-                      <div key={p.id} className="project-branch">
-                        <div className="nav-item">
-                          <NavRow
-                            active={project?.id === p.id && !allProjects}
-                            icon={project?.id === p.id ? FolderOpen : Folder}
-                            onClick={() => void select(p.id)}
-                          >
-                            {p.name}
-                          </NavRow>
-                          {rowActions('project', p.id, p.name)}
+          <>
+            <aside className="sidebar" style={{ width }} aria-label="Chats and projects">
+              <div className="sidebar-heading">
+                <span className="sidebar-wordmark">Kiko</span>
+                <IconButton icon={Search} label="Search" onClick={() => setSearchOpen(true)} />
+              </div>
+              <Button
+                className="new-chat"
+                data-new-chat
+                variant="ghost"
+                onClick={createChat}
+                disabled={busy}
+              >
+                <Icon icon={SquarePen} /> New chat
+              </Button>
+              <div className="sidebar-scroll">
+                <div className="sidebar-group">
+                  <div className="sidebar-section-heading">
+                    <h2>Projects</h2>
+                    <IconButton
+                      icon={FolderOpen}
+                      label="Choose project folder"
+                      disabled={busy || !!window.kikoWeb}
+                      onClick={() => void run(() => desktop().ChooseFolder(''))}
+                    />
+                  </div>
+                  {state.projects.map((p) => (
+                    <div key={p.id} className="project-branch">
+                      <div className="nav-item">
+                        <NavRow
+                          active={project?.id === p.id && !allProjects}
+                          icon={project?.id === p.id ? FolderOpen : Folder}
+                          onClick={() => void select(p.id)}
+                        >
+                          {p.name}
+                        </NavRow>
+                        {rowActions('project', p.id, p.name)}
+                      </div>
+                      {project?.id === p.id && (
+                        <div className="project-chats" aria-label={`${p.name} chats`}>
+                          {state.chats
+                            .filter((c) => c.projectId === p.id)
+                            .map((c) => (
+                              <div className="nav-item" key={c.id}>
+                                <NavRow
+                                  active={chat?.id === c.id && !allProjects}
+                                  onClick={() => void select('', c.id)}
+                                >
+                                  {c.title}
+                                </NavRow>
+                                {rowActions('chat', c.id, c.title)}
+                              </div>
+                            ))}
+                          {!state.chats.some((c) => c.projectId === p.id) && (
+                            <p className="empty-list">Start a conversation in this project.</p>
+                          )}
                         </div>
-                        {project?.id === p.id && (
-                          <div className="project-chats" aria-label={`${p.name} chats`}>
-                            {state.chats
-                              .filter((c) => c.projectId === p.id)
-                              .map((c) => (
-                                <div className="nav-item" key={c.id}>
-                                  <NavRow
-                                    active={chat?.id === c.id && !allProjects}
-                                    onClick={() => void select('', c.id)}
-                                  >
-                                    {c.title}
-                                  </NavRow>
-                                  {rowActions('chat', c.id, c.title)}
-                                </div>
-                              ))}
-                            {!state.chats.some((c) => c.projectId === p.id) && (
-                              <p className="empty-list">Start a conversation in this project.</p>
-                            )}
-                          </div>
-                        )}
+                      )}
+                    </div>
+                  ))}
+                  <button className="all-projects-link" onClick={() => setAllProjects(true)}>
+                    All projects <Icon icon={ChevronRight} size={13} />
+                  </button>
+                </div>
+                {project?.root && (
+                  <FolderExplorer
+                    key={project.id}
+                    project={project.id}
+                    onOpen={(path) => void openFile(path)}
+                  />
+                )}
+                <div className="sidebar-group">
+                  <h2>Recents</h2>
+                  {state.chats
+                    .filter((c) => !project || c.projectId !== project.id)
+                    .map((c) => (
+                      <div className="nav-item" key={c.id}>
+                        <NavRow
+                          active={chat?.id === c.id && !allProjects}
+                          onClick={() => void select('', c.id)}
+                        >
+                          {c.title}
+                        </NavRow>
+                        {rowActions('chat', c.id, c.title)}
                       </div>
                     ))}
-                    {!state.projects.length && (
-                      <button className="sidebar-empty-action" onClick={() => setProjectOpen(true)}>
-                        Create a space for your work <Icon icon={Plus} size={14} />
-                      </button>
-                    )}
-                    <button className="all-projects-link" onClick={() => setAllProjects(true)}>
-                      All projects <Icon icon={ChevronRight} size={13} />
-                    </button>
-                  </div>
-                  <div className="sidebar-group">
-                    <h2>Recents</h2>
-                    {state.chats
-                      .filter((c) => !project || c.projectId !== project.id)
-                      .map((c) => (
-                        <div className="nav-item" key={c.id}>
-                          <NavRow
-                            active={chat?.id === c.id && !allProjects}
-                            onClick={() => void select('', c.id)}
-                          >
-                            {c.title}
-                          </NavRow>
-                          {rowActions('chat', c.id, c.title)}
-                        </div>
-                      ))}
-                    {!state.chats.some((c) => !project || c.projectId !== project.id) && (
-                      <p className="empty-list">Your recent conversations will appear here.</p>
-                    )}
-                  </div>
+                  {!state.chats.some((c) => !project || c.projectId !== project.id) && (
+                    <p className="empty-list">Your recent conversations will appear here.</p>
+                  )}
                 </div>
-              </aside>
-              <div
-                className="sidebar-divider"
-                role="separator"
-                tabIndex={0}
-                aria-label="Sidebar width"
-                aria-orientation="vertical"
-                aria-valuemin={220}
-                aria-valuemax={320}
-                aria-valuenow={width}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    sidebarResize.cancel()
-                    return
-                  }
-                  const next =
-                    event.key === 'ArrowLeft'
-                      ? width - 8
-                      : event.key === 'ArrowRight'
-                        ? width + 8
-                        : event.key === 'Home'
-                          ? 220
-                          : event.key === 'End'
-                            ? 320
-                            : null
-                  if (next !== null) {
-                    event.preventDefault()
-                    void appearance(true, Math.max(220, Math.min(320, next)))
-                  }
-                }}
-                {...sidebarResize.handlers}
-              />
-            </>
-          )}
+              </div>
+            </aside>
+            <div
+              className="sidebar-divider"
+              role="separator"
+              tabIndex={0}
+              aria-label="Sidebar width"
+              aria-orientation="vertical"
+              aria-valuemin={220}
+              aria-valuemax={320}
+              aria-valuenow={width}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  sidebarResize.cancel()
+                  return
+                }
+                const next =
+                  event.key === 'ArrowLeft'
+                    ? width - 8
+                    : event.key === 'ArrowRight'
+                      ? width + 8
+                      : event.key === 'Home'
+                        ? 220
+                        : event.key === 'End'
+                          ? 320
+                          : null
+                if (next !== null) {
+                  event.preventDefault()
+                  void appearance(true, Math.max(220, Math.min(320, next)))
+                }
+              }}
+              {...sidebarResize.handlers}
+            />
+          </>
         </div>
         {preferences.sidebarOpen && mobile && (
           <button
@@ -329,63 +369,41 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
               <span className="spacer" />
             </header>
           )}
-          {chat && (state.artifacts ?? []).some((item) => item.chatId === chat.id) && (
-            <div className="artifact-list">
-              {state.artifacts
-                ?.filter((item) => item.chatId === chat.id)
-                .map((item) => (
-                  <button
-                    className="artifact-chip"
-                    key={item.id}
-                    onClick={() => void run(() => desktop().OpenArtifact(item.id))}
-                  >
-                    <Icon icon={FileText} size={16} />
-                    {item.title}
-                    <small>{item.kind === 'sheet' ? 'Spreadsheet' : 'Slides'}</small>
-                  </button>
-                ))}
-            </div>
-          )}
-          {chat && state.documents.some((d) => d.chatId === chat.id) && (
-            <div className="artifact-list">
-              {state.documents
-                .filter((d) => d.chatId === chat.id)
-                .map((d) => (
-                  <button
-                    className="artifact-chip"
-                    key={d.id}
-                    onClick={() => void run(() => desktop().OpenDocument(d.id))}
-                  >
-                    <Icon icon={FileText} size={16} />
-                    {d.title}
-                  </button>
-                ))}
-            </div>
-          )}
           <div aria-live="polite" className="work-status">
-            {busy && <span>Saving…</span>}
             {error && (
               <p role="alert" className="error">
                 {error}
               </p>
             )}
           </div>
-          {allProjects ? (
+          {settingsOpen ? (
+            <SettingsPage
+              state={state}
+              busy={busy}
+              error={error}
+              run={run}
+              section={settingsSection}
+              onSectionChange={setSettingsSection}
+              onBack={() => setSettingsOpen(false)}
+              onReset={() => setResetOpen(true)}
+            />
+          ) : allProjects ? (
             <section className="projects-view">
               <div className="section-title">
                 <div>
                   <h1>Projects</h1>
-                  <p className="muted">A space for each idea.</p>
+                  <p className="muted">Folders and their conversations.</p>
                 </div>
-                <Button onClick={() => setProjectOpen(true)}>
+                <Button
+                  disabled={!!window.kikoWeb || busy}
+                  onClick={() => void run(() => desktop().ChooseFolder(''))}
+                >
                   <Icon icon={Plus} />
-                  New project
+                  Choose folder
                 </Button>
               </div>
               {state.projects.length === 0 ? (
-                <p className="empty-list">
-                  No projects yet. Create one to organize your chats and documents.
-                </p>
+                <p className="empty-list">Choose a folder from the composer to start a project.</p>
               ) : (
                 <div className="project-grid">
                   {state.projects.map((p) => (
@@ -393,7 +411,7 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
                       <button className="project-card-main" onClick={() => void select(p.id)}>
                         <Icon icon={Folder} size={24} />
                         <h2>{p.name}</h2>
-                        <p>{p.description || 'Your next idea starts here.'}</p>
+                        <p>{p.root || p.description}</p>
                         <small>
                           {state.chats.filter((c) => c.projectId === p.id).length} chats
                         </small>
@@ -414,20 +432,17 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
                   : 'What would you like to create?'
               }
               subtitle=""
+              onOpenFile={(path) => void openFile(path)}
               onPreferences={() => {
                 setSettingsSection('General')
                 setSettingsOpen(true)
               }}
               onState={onState}
-              onReconnect={() => {
-                setSettingsSection('AI & models')
-                setSettingsOpen(true)
-              }}
               run={run}
             />
           )}
         </main>
-        {!!state.artifactId && !document && !allProjects && (
+        {!!state.artifactId && !document && !allProjects && !file && (
           <EditorBoundary
             key={state.artifactId}
             close={async () => {
@@ -437,13 +452,18 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
             <ArtifactPane
               key={state.artifactId}
               id={state.artifactId}
+              sourceControls={
+                project?.root ? (
+                  <SourceStatus key={state.artifactId} id={state.artifactId} run={run} />
+                ) : undefined
+              }
               close={async () => {
                 await run(() => desktop().CloseArtifact())
               }}
             />
           </EditorBoundary>
         )}
-        {document && !allProjects && (
+        {document && !allProjects && !file && (
           <EditorBoundary
             key={document.id}
             close={async () => {
@@ -460,6 +480,11 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
               <DocumentPane
                 key={document.id}
                 id={document.id}
+                sourceControls={
+                  project?.root ? (
+                    <SourceStatus key={document.id} id={document.id} run={run} />
+                  ) : undefined
+                }
                 onState={onState}
                 close={async () => {
                   await run(() => desktop().CloseDocument())
@@ -468,60 +493,36 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
             </Suspense>
           </EditorBoundary>
         )}
+        {file && !allProjects && (
+          <EditorBoundary
+            key={`${file.project}:${file.path}`}
+            close={async () => {
+              closeFile()
+            }}
+          >
+            <WorkspaceFilePane
+              key={`${file.project}:${file.path}`}
+              project={file.project}
+              chat={chat?.id ?? ''}
+              path={file.path}
+              close={closeFile}
+              run={run}
+              onImported={() => setFile(null)}
+            />
+          </EditorBoundary>
+        )}
       </div>
       <Dialog
-        open={projectOpen}
+        open={!!fileError}
         onOpenChange={(open) => {
-          if (!busy) setProjectOpen(open)
+          if (!open) setFileError('')
         }}
-        title="New project"
-        description="Keep related chats and documents together."
+        title="Couldn’t open this file"
+        description={fileError}
       >
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault()
-            const data = new FormData(event.currentTarget)
-            if (
-              await run(() =>
-                desktop().CreateProject(String(data.get('name')), String(data.get('description'))),
-              )
-            ) {
-              setProjectOpen(false)
-              setAllProjects(false)
-            }
-          }}
-        >
-          <Field
-            label="Project name"
-            name="name"
-            required
-            maxLength={120}
-            placeholder="e.g. Envi, or your next big idea"
-            disabled={busy}
-          />
-          <label className="field">
-            <span>Description (optional)</span>
-            <textarea
-              name="description"
-              maxLength={2000}
-              placeholder="A short description of this project…"
-              disabled={busy}
-            />
-          </label>
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="dialog-actions">
-            <Button variant="secondary" disabled={busy} onClick={() => setProjectOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Creating…' : 'Create project'}
-            </Button>
-          </div>
-        </form>
+        <div className="dialog-actions">
+          <Button onClick={() => setFileError('')}>Close</Button>
+        </div>
       </Dialog>
       <Dialog
         open={editing !== null}
@@ -535,7 +536,7 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
         }
         description={
           editing?.mode === 'delete'
-            ? `Deleting “${editing.title}” also removes its ${editing.kind === 'project' ? 'chats, ' : ''}documents and history. This cannot be undone.`
+            ? `Deleting “${editing.title}” also removes its ${editing.kind === 'project' ? 'chats, ' : ''}documents and history from Kiko. Files in your selected folder are kept. This cannot be undone.`
             : 'Choose a clear name you can find later.'
         }
       >
@@ -589,7 +590,7 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
         open={resetOpen}
         onOpenChange={setResetOpen}
         title="Reset Kiko?"
-        description="This permanently deletes all local projects, chats, documents, drafts, revisions, and preferences, and removes your saved Muse key. You will return to onboarding."
+        description="This permanently deletes all local projects, chats, documents, drafts, revisions, and preferences, and removes your saved Muse key. Files in selected folders are kept. You will return to onboarding."
       >
         <form
           onSubmit={async (event) => {
@@ -630,15 +631,22 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
             if (
               chat &&
               (await run(() =>
-                createKind === 'deck'
-                  ? desktop().CreateDeck(chat.id, String(data.get('title')))
-                  : createKind === 'sheet'
-                    ? desktop().CreateSheet(chat.id, String(data.get('title')))
-                    : desktop().CreateDocument(
-                        chat.id,
-                        String(data.get('title')),
-                        '# ' + String(data.get('title')),
-                      ),
+                project?.root && String(data.get('path') ?? '').trim()
+                  ? desktop().CreateArtifactAt(
+                      chat.id,
+                      createKind,
+                      String(data.get('title')),
+                      String(data.get('path')).trim(),
+                    )
+                  : createKind === 'deck'
+                    ? desktop().CreateDeck(chat.id, String(data.get('title')))
+                    : createKind === 'sheet'
+                      ? desktop().CreateSheet(chat.id, String(data.get('title')))
+                      : desktop().CreateDocument(
+                          chat.id,
+                          String(data.get('title')),
+                          '# ' + String(data.get('title')),
+                        ),
               ))
             ) {
               setDocumentOpen(false)
@@ -647,13 +655,39 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
         >
           <label className="field">
             <span>Type</span>
-            <select value={createKind} onChange={(event) => setCreateKind(event.target.value)}>
-              <option value="document">Document</option>
-              <option value="sheet">Spreadsheet</option>
-              <option value="deck">Slide deck</option>
-            </select>
+            <Select
+              label="Type"
+              value={createKind}
+              onChange={setCreateKind}
+              options={[
+                { value: 'document', label: 'Document' },
+                { value: 'sheet', label: 'Spreadsheet' },
+                { value: 'deck', label: 'Slide deck' },
+              ]}
+            />
           </label>
           <Field label="Document title" name="title" required maxLength={120} />
+          {project?.root && (
+            <Field
+              key={createKind}
+              label="Save path (optional)"
+              name="path"
+              placeholder={
+                createKind === 'document' ? 'docs/plan.md' : `docs/file.${createKind}.json`
+              }
+              maxLength={500}
+            />
+          )}
+          {project?.root && (
+            <p className="field-hint">
+              Relative to {project.name}. Leave blank for an automatic filename.
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setDocumentOpen(false)}>
               Cancel
@@ -665,392 +699,6 @@ export function Workspace({ state, busy, error, run, onState }: Props) {
         </form>
       </Dialog>
       <SearchDialog open={searchOpen} setOpen={setSearchOpen} run={run} />
-      <Dialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        title="Settings"
-        className="settings-dialog"
-        description="Make Kiko feel like your workspace."
-      >
-        <div className="settings-layout">
-          <nav className="settings-navigation" aria-label="Settings sections">
-            {[
-              { name: 'General', icon: SlidersHorizontal },
-              { name: 'AI & models', icon: Cpu },
-              { name: 'Research', icon: Globe },
-              { name: 'Data', icon: Database },
-            ].map(({ name, icon }) => (
-              <button
-                key={name}
-                aria-current={settingsSection === name ? 'page' : undefined}
-                onClick={() => setSettingsSection(name)}
-              >
-                <Icon icon={icon} size={17} />
-                {name}
-              </button>
-            ))}
-            <div className="settings-about">
-              <Brand compact />
-              <span>
-                Kiko<small>Your ideas, made useful.</small>
-              </span>
-            </div>
-          </nav>
-          <div className="settings-content">
-            <section hidden={settingsSection !== 'General'} aria-label="General settings">
-              <h2>General</h2>
-              <p className="settings-intro">A workspace that feels like yours.</p>
-              {window.kikoWeb && (
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    void fetch('/api/logout', { method: 'POST' }).then(() =>
-                      window.location.reload(),
-                    )
-                  }
-                >
-                  Sign out of web workspace
-                </Button>
-              )}
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault()
-                  const data = new FormData(event.currentTarget)
-                  await run(() => desktop().SaveNickname(String(data.get('nickname'))))
-                }}
-              >
-                <Field
-                  label="Nickname"
-                  name="nickname"
-                  defaultValue={preferences.nickname}
-                  required
-                  disabled={busy}
-                />
-                <Button type="submit" variant="secondary" disabled={busy}>
-                  Save nickname
-                </Button>
-              </form>
-              <label className="suggestion-mode">
-                <input
-                  type="checkbox"
-                  checked={!!preferences.suggestionMode}
-                  disabled={busy}
-                  onChange={(event) => {
-                    const selected = event.target.checked
-                    void run(() => desktop().SetSuggestionMode(selected))
-                  }}
-                />
-                <span>Review AI document edits as suggestions</span>
-              </label>
-              <fieldset className="theme-picker">
-                <legend>Appearance</legend>
-                {(['dark', 'light', 'system'] as const).map((theme) => (
-                  <label key={theme} className={`theme-option ${theme}`}>
-                    <span className="theme-preview" aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <span>
-                      <input
-                        type="radio"
-                        name="theme"
-                        value={theme}
-                        checked={preferences.theme === theme}
-                        disabled={busy}
-                        onChange={() => void appearance(preferences.sidebarOpen, width, theme)}
-                      />
-                      {theme[0].toUpperCase() + theme.slice(1)}
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
-            </section>
-            <section hidden={settingsSection !== 'AI & models'} aria-label="AI and model settings">
-              <h2>AI & models</h2>
-              <p className="settings-intro">Choose the intelligence behind your work.</p>
-              <div className="connection-summary">
-                <Icon icon={Settings2} />
-                <div>
-                  <strong>Meta Muse</strong>
-                  <p className="muted">
-                    {state.provider?.id && state.provider.id !== 'muse'
-                      ? 'Muse saved separately'
-                      : state.connected
-                        ? 'Connected'
-                        : 'Disconnected'}{' '}
-                    · Muse Spark 1.3 Contributor
-                  </p>
-                </div>
-              </div>
-              <p className="field-hint">
-                {window.kikoWeb
-                  ? 'Keys are encrypted on this Kiko server. Saved keys are never sent back to your browser.'
-                  : 'Keys are managed in your operating system’s secure keychain.'}
-              </p>
-              <form
-                className="key-settings"
-                onSubmit={async (event) => {
-                  event.preventDefault()
-                  if (await run(() => desktop().ConnectMuse(replacementKey))) setReplacementKey('')
-                }}
-              >
-                <Field
-                  label={state.connected ? 'Replace Muse API key' : 'Connect Muse API key'}
-                  type={showKey ? 'text' : 'password'}
-                  value={replacementKey}
-                  onChange={(event) => setReplacementKey(event.target.value)}
-                  autoComplete="off"
-                  disabled={busy}
-                />
-                <Button variant="ghost" onClick={() => setShowKey(!showKey)}>
-                  {showKey ? 'Hide key' : 'Show key'}
-                </Button>
-                <p className="field-hint">
-                  Verifying sends a short request to Meta and may use your API credits. Your
-                  existing key stays until the replacement is verified.
-                </p>
-                <Button type="submit" variant="secondary" disabled={busy || !replacementKey.trim()}>
-                  Verify and save key
-                </Button>
-                {state.connected && (
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => void run(() => desktop().RemoveMuseKey())}
-                  >
-                    Remove saved key
-                  </Button>
-                )}
-              </form>
-              <label className="field">
-                <span>Model</span>
-                <select
-                  value="muse-spark-1.3-contributor"
-                  onChange={(event) => {
-                    const selected = event.target.value
-                    void run(() => desktop().SetModel(selected))
-                  }}
-                >
-                  <option value="muse-spark-1.3-contributor">Muse Spark 1.3 Contributor</option>
-                </select>
-              </label>
-              <p className="field-hint">
-                Contributor mode offers discounted usage and allows Meta to use submitted content
-                and responses for model training.
-              </p>
-              <section className="key-settings">
-                <h2>Model providers</h2>
-                <label className="field">
-                  <span>Provider for this chat and new chats</span>
-                  <select
-                    value={state.provider?.id ?? 'muse'}
-                    disabled={busy}
-                    onChange={(event) => {
-                      const selected = event.target.value
-                      void run(() => desktop().SelectProvider(selected))
-                    }}
-                  >
-                    {(state.providers ?? [{ id: 'muse', model: 'muse-spark-1.3-contributor' }]).map(
-                      (item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.id} · {item.model}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <p className="field-hint">
-                  Providers never switch automatically after an error. Use a chat/tool-capable model
-                  ID available to your account.
-                </p>
-                {(state.providers ?? [])
-                  .filter((item) => item.id === 'openai' || item.id === 'anthropic')
-                  .map((item) => (
-                    <label className="field-hint" key={item.id}>
-                      <input
-                        type="checkbox"
-                        disabled={busy}
-                        checked={preferences.imageModels?.[item.id] === item.model}
-                        onChange={(event) => {
-                          const enabled = event.target.checked
-                          void run(() => desktop().SetDirectImages(item.id, enabled))
-                        }}
-                      />
-                      Send page and diagram images directly to {item.id} · {item.model}
-                    </label>
-                  ))}
-                <p className="field-hint">
-                  Enable direct images only for an image-capable model. Rendered source images then
-                  go to that chat provider on request, using its credits. Changing the model
-                  requires enabling this again. Disabling takes effect before the next model
-                  request. Muse uses the separately selected vision helper.
-                </p>
-                <form
-                  onSubmit={async (event) => {
-                    event.preventDefault()
-                    if (
-                      await run(() =>
-                        desktop().ConfigureProvider(
-                          providerID,
-                          providerModel,
-                          providerKey,
-                          providerEndpoint,
-                        ),
-                      )
-                    )
-                      setProviderKey('')
-                  }}
-                >
-                  <label className="field">
-                    <span>Add or update provider</span>
-                    <select
-                      value={providerID}
-                      onChange={(event) => setProviderID(event.target.value)}
-                    >
-                      {['openai', 'openrouter', 'anthropic', 'groq', 'gemini', 'ollama'].map(
-                        (id) => (
-                          <option value={id} key={id}>
-                            {id === 'ollama' ? 'Ollama (local)' : id}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  <Field
-                    label="Model ID"
-                    value={providerModel}
-                    onChange={(event) => setProviderModel(event.target.value)}
-                    required
-                    placeholder="Exact model ID for your account"
-                  />
-                  {providerID === 'ollama' ? (
-                    <Field
-                      label="Local Ollama endpoint"
-                      value={providerEndpoint}
-                      onChange={(event) => setProviderEndpoint(event.target.value)}
-                    />
-                  ) : (
-                    <Field
-                      label="Provider API key"
-                      type="password"
-                      value={providerKey}
-                      onChange={(event) => setProviderKey(event.target.value)}
-                      autoComplete="off"
-                      required
-                    />
-                  )}
-                  <p className="field-hint">
-                    Connect sends a short request to this provider and may use credits. Keys are
-                    saved separately in secure storage.
-                  </p>
-                  <Button type="submit" variant="secondary" disabled={busy}>
-                    Verify and select provider
-                  </Button>
-                  {state.providers?.some((item) => item.id === providerID) && (
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void run(() => desktop().RemoveProviderKey(providerID))}
-                    >
-                      Remove this provider key
-                    </Button>
-                  )}
-                </form>
-                <label className="field">
-                  <span>Vision helper</span>
-                  <select
-                    value={preferences.visionProviderId ?? 'muse'}
-                    onChange={(event) => {
-                      const selected = event.target.value
-                      void run(() => desktop().SetVisionProvider(selected))
-                    }}
-                  >
-                    {(state.providers ?? [{ id: 'muse', model: 'muse-spark-1.3-contributor' }])
-                      .filter((item) => item.id === 'muse' || item.id === 'openai')
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.id} · {item.model}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <p className="field-hint">
-                  Choose a vision-capable Responses model. Visual requests use this provider’s
-                  credits; there is no fallback.
-                </p>
-              </section>
-            </section>
-            <section
-              hidden={settingsSection !== 'Research'}
-              aria-label="Research settings"
-              className="key-settings"
-            >
-              <h2>Web research</h2>
-              <p className="field-hint">
-                Optional Tavily Basic search and page extraction. Calls use your Tavily credits;
-                source excerpts are sent to your selected model. At most five research calls per
-                turn.
-              </p>
-              <p>
-                {preferences.tavilyEnabled ? 'Tavily key saved' : 'Not configured'} ·{' '}
-                {
-                  state.messages
-                    .flatMap((message) => message.steps ?? [])
-                    .filter((step) => step.tool === 'web_search' || step.tool === 'web_fetch')
-                    .length
-                }{' '}
-                calls in this chat
-              </p>
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault()
-                  if (await run(() => desktop().ConfigureResearch(researchKey))) setResearchKey('')
-                }}
-              >
-                <Field
-                  label="Tavily API key"
-                  type="password"
-                  value={researchKey}
-                  onChange={(event) => setResearchKey(event.target.value)}
-                  autoComplete="off"
-                />
-                <Button type="submit" variant="secondary" disabled={busy || !researchKey.trim()}>
-                  Save research key
-                </Button>
-                {preferences.tavilyEnabled && (
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => void run(() => desktop().RemoveResearch())}
-                  >
-                    Remove research key
-                  </Button>
-                )}
-              </form>
-            </section>
-            <section
-              hidden={settingsSection !== 'Data'}
-              aria-label="Data settings"
-              className="settings-data"
-            >
-              <h2>Data</h2>
-              <p className="field-hint">
-                Remove all local projects, chats, documents, history, preferences, and the saved
-                Muse key.
-              </p>
-              <Button variant="danger" onClick={() => setResetOpen(true)}>
-                Reset Kiko
-              </Button>
-            </section>
-            {error && (
-              <p role="alert" className="error">
-                {error}
-              </p>
-            )}
-          </div>
-        </div>
-      </Dialog>
     </div>
   )
 }

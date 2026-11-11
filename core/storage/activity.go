@@ -5,15 +5,17 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
 type Activity struct {
-	ID     string          `json:"id"`
-	Tool   string          `json:"tool"`
-	Label  string          `json:"label"`
-	Status string          `json:"status"`
-	Detail json.RawMessage `json:"-"`
+	OutputID string          `json:"outputId,omitempty"`
+	ID       string          `json:"id"`
+	Tool     string          `json:"tool"`
+	Label    string          `json:"label"`
+	Status   string          `json:"status"`
+	Detail   json.RawMessage `json:"-"`
 }
 type queryRows interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
@@ -33,6 +35,25 @@ func activity(ctx context.Context, db queryRows, messageID string) ([]Activity, 
 			return nil, err
 		}
 		step.Detail = json.RawMessage(raw)
+		if step.Status == "ok" {
+			var detail struct {
+				Result string `json:"result"`
+			}
+			_ = json.Unmarshal(step.Detail, &detail)
+			switch step.Tool {
+			case "create_document":
+				fields := strings.Fields(detail.Result)
+				if len(fields) > 1 && fields[0] == "Document" {
+					step.OutputID = fields[1]
+				}
+			case "create_sheet", "create_deck":
+				var result struct {
+					ID string `json:"id"`
+				}
+				_ = json.Unmarshal([]byte(detail.Result), &result)
+				step.OutputID = result.ID
+			}
+		}
 		result = append(result, step)
 	}
 	return result, rows.Err()
@@ -41,6 +62,10 @@ func (s *Store) StartActivity(ctx context.Context, message, tool, label string) 
 	id := rand.Text()
 	_, err := s.db.ExecContext(ctx, "INSERT INTO tool_steps(id,message_id,tool,label,status,created_at) VALUES (?,?,?,?,'running',?)", id, message, tool, label, time.Now().UnixMilli())
 	return id, err
+}
+func (s *Store) UpdateActivity(ctx context.Context, id, label string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE tool_steps SET label=? WHERE id=? AND status='running'", label, id)
+	return err
 }
 func (s *Store) FinishActivity(ctx context.Context, id, status string, detail any) error {
 	data, err := json.Marshal(detail)
@@ -81,6 +106,9 @@ func (s *Store) ChatDocuments(ctx context.Context, chat string) ([]struct {
 
 func (s *Store) RecoverActivity(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE tool_steps SET status='cancelled' WHERE status='running'")
+	if err == nil {
+		_, err = s.db.ExecContext(ctx, "UPDATE file_permissions SET status='cancelled' WHERE status='pending'")
+	}
 	return err
 }
 

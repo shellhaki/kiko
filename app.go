@@ -8,7 +8,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"kiko/core/attachment"
 	"kiko/core/deck"
-	"kiko/core/provider"
 	"kiko/core/sheet"
 	"net/url"
 	"os"
@@ -22,15 +21,17 @@ import (
 	exports "kiko/core/export"
 	"kiko/core/muse"
 	"kiko/core/storage"
+	"kiko/core/workspace"
 )
 
 type App struct {
-	secretFor func(string) core.Secrets
-	onMessage func(storage.Message)
-	ctx       context.Context
-	mu        sync.Mutex
-	service   *core.Service
-	dataPath  string
+	pickFolder func(context.Context) (string, error)
+	secretFor  func(string) core.Secrets
+	onMessage  func(storage.Message)
+	ctx        context.Context
+	mu         sync.Mutex
+	service    *core.Service
+	dataPath   string
 }
 
 func (a *App) Info() core.AppInfo          { return core.AppInfo{Name: "Kiko", Version: core.Version} }
@@ -83,9 +84,7 @@ func (a *App) backend() (*core.Service, error) {
 	if secrets == nil {
 		secrets = func(id string) core.Secrets { return systemKeys{account: id} }
 	}
-	a.service = &core.Service{Store: store, Keys: secrets("muse"), SecretFor: secrets, Verifier: muse.Verifier{}, Provider: muse.Client{}, ProviderFactory: func(config storage.ProviderConfig, maxTokens int) provider.Provider {
-		return core.NewProvider(config, maxTokens)
-	}}
+	a.service = &core.Service{Store: store, Keys: secrets("muse"), SecretFor: secrets, Verifier: muse.Verifier{}, Provider: muse.Client{}}
 	return a.service, nil
 }
 func (a *App) Bootstrap() (storage.State, error) {
@@ -204,8 +203,12 @@ func (a *App) OpenLink(value string) error {
 
 func (a *App) CreateDocument(chat, title, markdown string) (storage.State, error) {
 	return a.change(func(s *core.Service) error {
-		_, err := s.Store.CreateDocument(a.ctx, chat, title, markdown, nil, "user")
-		return err
+		doc, err := s.Store.CreateDocument(a.ctx, chat, title, markdown, nil, "user")
+		if err != nil {
+			return err
+		}
+		_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: chat}, doc.ID)
+		return nil
 	})
 }
 func (a *App) ReadDocument(id string, options storage.ReadOptions) (storage.DocumentRead, error) {
@@ -220,7 +223,11 @@ func (a *App) SaveDocument(id string, rev int, blocks []document.Block) (documen
 	if err != nil {
 		return document.Document{}, err
 	}
-	return s.Store.SaveDocument(a.ctx, id, rev, blocks)
+	doc, err := s.Store.SaveDocument(a.ctx, id, rev, blocks)
+	if err == nil {
+		_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: doc.ChatID}, id)
+	}
+	return doc, err
 }
 func (a *App) SaveDocumentDraft(id string, rev int, blocks []document.Block) error {
 	s, err := a.backend()
@@ -256,7 +263,11 @@ func (a *App) RestoreDocument(id string, expected, revision int) (document.Docum
 	if err != nil {
 		return document.Document{}, err
 	}
-	return s.Store.RestoreDocument(a.ctx, id, expected, revision)
+	doc, err := s.Store.RestoreDocument(a.ctx, id, expected, revision)
+	if err == nil {
+		_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: doc.ChatID}, id)
+	}
+	return doc, err
 }
 func (a *App) ExportDocument(id string) (bool, error) { return a.ExportDocumentFormat(id, "md") }
 func (a *App) ExportFormats() []string {
@@ -498,6 +509,7 @@ func (a *App) SaveArtifact(id string, rev int, payload json.RawMessage) (Artifac
 	if err != nil {
 		return ArtifactData{}, err
 	}
+	_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: value.ChatID}, id)
 	return artifactData(value)
 }
 func (a *App) SaveArtifactDraft(id string, rev int, payload json.RawMessage) error {
@@ -519,8 +531,12 @@ func (a *App) CloseArtifact() (storage.State, error) {
 func (a *App) CreateSheet(chat, title string) (storage.State, error) {
 	return a.change(func(s *core.Service) error {
 		payload, _ := json.Marshal(sheet.Book{Tabs: []sheet.Tab{{Name: "Sheet1", Cells: map[string]sheet.Cell{}}}})
-		_, err := s.Store.CreateArtifact(a.ctx, chat, "sheet", title, payload, "user")
-		return err
+		value, err := s.Store.CreateArtifact(a.ctx, chat, "sheet", title, payload, "user")
+		if err != nil {
+			return err
+		}
+		_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: chat}, value.ID)
+		return nil
 	})
 }
 func (a *App) ExportArtifact(id, format, tab string) (bool, error) {
@@ -553,6 +569,9 @@ func (a *App) ExportArtifact(id, format, tab string) (bool, error) {
 		if format != "pptx" && format != "pdf" {
 			return false, errors.New("Unsupported slide export.")
 		}
+		if format == "pptx" {
+			return false, errors.New("Export slides from the editor preview.")
+		}
 		var slides deck.Deck
 		if err = json.Unmarshal(record.Payload, &slides); err != nil {
 			return false, err
@@ -564,11 +583,7 @@ func (a *App) ExportArtifact(id, format, tab string) (bool, error) {
 			}
 			return data, nil
 		}
-		if format == "pptx" {
-			data, err = deck.PPTX(slides, resolve)
-		} else {
-			data, err = deck.PDF(a.ctx, slides, resolve)
-		}
+		data, err = deck.PDF(a.ctx, slides, resolve)
 	} else {
 		return false, errors.New("Unsupported artifact.")
 	}
@@ -594,57 +609,61 @@ func (a *App) ExportArtifact(id, format, tab string) (bool, error) {
 	}
 	return true, nil
 }
-
-func (a *App) ConfigureProvider(id, model, key, endpoint string) (storage.State, error) {
-	return a.change(func(s *core.Service) error { return s.ConfigureProvider(a.ctx, id, model, key, endpoint) })
-}
-func (a *App) SelectProvider(id string) (storage.State, error) {
-	return a.change(func(s *core.Service) error { return s.SelectProvider(a.ctx, id) })
-}
-
-func (a *App) SetVisionProvider(id string) (storage.State, error) {
-	return a.change(func(s *core.Service) error { return s.SetVisionProvider(a.ctx, id) })
-}
-
-func (a *App) RemoveProviderKey(id string) (storage.State, error) {
-	return a.change(func(s *core.Service) error { return s.RemoveProviderKey(a.ctx, id) })
+func (a *App) ExportDeckPptx(id, encoded string) (bool, error) {
+	s, err := a.backend()
+	if err != nil {
+		return false, err
+	}
+	record, err := s.Store.ReadArtifact(a.ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if record.Kind != "deck" {
+		return false, errors.New("Only slide decks export this way.")
+	}
+	if record.Draft != nil {
+		return false, errors.New("Save the artifact draft before exporting.")
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(data) < 2 || data[0] != 'P' || data[1] != 'K' {
+		return false, errors.New("The slide preview didn’t produce a presentation.")
+	}
+	if len(data) > 64*1024*1024 {
+		return false, errors.New("This presentation is too large to export.")
+	}
+	name := strings.Map(func(r rune) rune {
+		if r < ' ' || strings.ContainsRune(`/\\:*?"<>|`, r) {
+			return '-'
+		}
+		return r
+	}, record.Title)
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{DefaultFilename: name + ".pptx", Title: "Export slides", Filters: []runtime.FileFilter{{DisplayName: "PPTX", Pattern: "*.pptx"}}})
+	if err != nil {
+		return false, err
+	}
+	if path == "" {
+		return false, nil
+	}
+	if err = exports.Write(path, data); err != nil {
+		return false, errors.New("Couldn’t write this export.")
+	}
+	return true, nil
 }
 
 func (a *App) CreateDeck(chat, title string) (storage.State, error) {
 	return a.change(func(s *core.Service) error {
-		slides := deck.Deck{Slides: []deck.Slide{{Layout: "title", Title: title, Body: []string{"Your story starts here."}}}}
+		slides := deck.Deck{Slides: []deck.Slide{{Layout: "title", Title: title, Body: []string{}}}}
 		if err := deck.Prepare(&slides); err != nil {
 			return err
 		}
 		data, _ := json.Marshal(slides)
-		_, err := s.Store.CreateArtifact(a.ctx, chat, "deck", title, data, "user")
-		return err
-	})
-}
-
-func (a *App) SetSuggestionMode(enabled bool) (storage.State, error) {
-	return a.change(func(s *core.Service) error {
-		prefs, err := s.Store.Preferences(a.ctx)
+		value, err := s.Store.CreateArtifact(a.ctx, chat, "deck", title, data, "user")
 		if err != nil {
 			return err
 		}
-		prefs.SuggestionMode = enabled
-		return s.Store.SavePreferences(a.ctx, prefs)
+		_ = s.SyncWorkspace(a.ctx, storage.Run{ChatID: chat}, value.ID)
+		return nil
 	})
-}
-func (a *App) AcceptSuggestion(id string) (document.Document, error) {
-	s, err := a.backend()
-	if err != nil {
-		return document.Document{}, err
-	}
-	return s.Store.AcceptSuggestion(a.ctx, id)
-}
-func (a *App) RejectSuggestion(id string) error {
-	s, err := a.backend()
-	if err != nil {
-		return err
-	}
-	return s.Store.RejectSuggestion(a.ctx, id)
 }
 
 func (a *App) emitMessage(message storage.Message) {
@@ -663,9 +682,6 @@ func (a *App) DiscardArtifactDraft(id string) error {
 	return s.Store.DiscardArtifactDraft(a.ctx, id)
 }
 
-func (a *App) SetDirectImages(id string, enabled bool) (storage.State, error) {
-	return a.change(func(s *core.Service) error { return s.SetDirectImages(a.ctx, id, enabled) })
-}
 func (a *App) RenderAttachmentPage(chat, id string, page int) (string, error) {
 	s, err := a.backend()
 	if err != nil {
@@ -676,4 +692,77 @@ func (a *App) RenderAttachmentPage(chat, id string, page int) (string, error) {
 		return "", err
 	}
 	return "data:" + image.MIME + ";base64," + base64.StdEncoding.EncodeToString(image.Data), nil
+}
+
+func (a *App) ChooseFolder(chat string) (storage.State, error) {
+	picker := a.pickFolder
+	if picker == nil {
+		picker = func(ctx context.Context) (string, error) {
+			return runtime.OpenDirectoryDialog(ctx, runtime.OpenDialogOptions{Title: "Choose workspace folder"})
+		}
+	}
+	path, err := picker(a.ctx)
+	if err != nil {
+		return storage.State{}, errors.New("Couldn’t open the folder picker.")
+	}
+	if path == "" {
+		return a.Bootstrap()
+	}
+	return a.change(func(s *core.Service) error { return s.UseFolder(a.ctx, path, chat) })
+}
+func (a *App) WorkspaceFiles(chat string) ([]storage.WorkspaceFile, error) {
+	s, err := a.backend()
+	if err != nil {
+		return nil, err
+	}
+	return s.Store.WorkspaceFiles(a.ctx, chat)
+}
+func (a *App) FilePermissions(chat string) ([]storage.FilePermission, error) {
+	s, err := a.backend()
+	if err != nil {
+		return nil, err
+	}
+	return s.Store.FilePermissions(a.ctx, chat)
+}
+func (a *App) ResolveFilePermission(id string, approved bool) error {
+	s, err := a.backend()
+	if err != nil {
+		return err
+	}
+	status := "denied"
+	if approved {
+		status = "approved"
+	}
+	return s.Store.ResolveFilePermission(a.ctx, id, status)
+}
+func (a *App) ReadWorkspaceFile(chat, path string) (workspace.File, error) {
+	s, err := a.backend()
+	if err != nil {
+		return workspace.File{}, err
+	}
+	folder, err := s.Store.ChatFolder(a.ctx, chat)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	root, err := workspace.Open(folder.Root)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	defer root.Close()
+	return workspace.Read(root, path)
+}
+
+func (a *App) WorkspaceIssues(chat string) ([]storage.WorkspaceIssue, error) {
+	s, err := a.backend()
+	if err != nil {
+		return nil, err
+	}
+	return s.Store.WorkspaceIssues(a.ctx, chat)
+}
+func (a *App) RetryWorkspaceSync(chat, source string) error {
+	s, err := a.backend()
+	if err != nil {
+		return err
+	}
+	return s.SyncWorkspace(a.ctx, storage.Run{ChatID: chat}, source)
 }

@@ -2,7 +2,99 @@ import { useEffect, useState } from 'react'
 import { desktop } from './api'
 import type { Attachment } from './api'
 import type { Deck, Slide } from './artifact-model'
-import { Button } from './components/ui'
+import { Button, Select } from './components/ui'
+import { deckFont, deckLayout, deckPalette, slideSize, type SlideRect } from './deck-theme'
+
+function area(rect: SlideRect) {
+  return {
+    left: `${(rect.x / slideSize.width) * 100}%`,
+    top: `${(rect.y / slideSize.height) * 100}%`,
+    width: `${(rect.w / slideSize.width) * 100}%`,
+    height: `${(rect.h / slideSize.height) * 100}%`,
+  }
+}
+
+function SlidePreview({ slide, number, image }: { slide: Slide; number: number; image?: string }) {
+  const peak = Math.max(1, ...(slide.chart?.values ?? [1]))
+  return (
+    <div
+      className={`slide-preview layout-${slide.layout}`}
+      aria-label={`Slide ${number} preview`}
+      style={{ background: `#${deckPalette.background}`, fontFamily: deckFont }}
+    >
+      <div
+        className="slide-strip"
+        style={{ ...area(deckLayout.strip), background: `#${deckPalette.accent}` }}
+      />
+      {slide.layout === 'title' ? (
+        <>
+          <h1 className="slide-title accent" style={area(deckLayout.titleSlide)}>
+            {slide.title}
+          </h1>
+          <ul className="slide-subtitle" style={area(deckLayout.subtitle)}>
+            {(slide.body ?? []).map((point) => (
+              <li key={point}>{point}</li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <h1 className="slide-title" style={area(deckLayout.title)}>
+            {slide.title}
+          </h1>
+          {slide.layout === 'bullets' && (
+            <ul className="slide-points" style={area(deckLayout.body)}>
+              {(slide.body ?? []).map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          )}
+          {slide.layout === 'columns' && (
+            <div className="slide-columns" style={area(deckLayout.body)}>
+              <ul>
+                {(slide.left ?? []).map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+              <ul>
+                {(slide.right ?? []).map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {slide.layout === 'image' && (
+            <>
+              {image && (
+                <img className="slide-image" style={area(deckLayout.image)} src={image} alt="" />
+              )}
+              <p className="slide-caption" style={area(deckLayout.caption)}>
+                {(slide.body ?? []).join(' · ')}
+              </p>
+            </>
+          )}
+          {slide.layout === 'chart' && slide.chart && (
+            <div className="slide-chart" style={area(deckLayout.chart)}>
+              {slide.chart.values.map((value, position) => (
+                <div key={slide.chart!.labels[position]}>
+                  <strong>{value}</strong>
+                  <span
+                    style={{
+                      height: `${Math.max(2, (value / peak) * 100)}%`,
+                      background: `#${deckPalette.chart[position % deckPalette.chart.length]}`,
+                    }}
+                  />
+                  <small>{slide.chart!.labels[position]}</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <span className="slide-number">{number}</span>
+    </div>
+  )
+}
 
 export function DeckEditor({
   deck,
@@ -84,53 +176,11 @@ export function DeckEditor({
         </Button>
       </nav>
       <div className="slide-workspace">
-        <div
-          className={`slide-preview layout-${slide.layout}`}
-          aria-label={`Slide ${index + 1} preview`}
-        >
-          <h1>{slide.title}</h1>
-          {slide.layout === 'columns' ? (
-            <div className="slide-columns">
-              <ul>
-                {slide.left?.map((text, i) => (
-                  <li key={i}>{text}</li>
-                ))}
-              </ul>
-              <ul>
-                {slide.right?.map((text, i) => (
-                  <li key={i}>{text}</li>
-                ))}
-              </ul>
-            </div>
-          ) : slide.layout === 'chart' && slide.chart ? (
-            <div className="slide-chart">
-              {slide.chart.labels.map((label, i) => {
-                const maximum = Math.max(1, ...slide.chart!.values.map(Math.abs))
-                return (
-                  <div key={i}>
-                    <strong>{slide.chart!.values[i]}</strong>
-                    <span
-                      style={{
-                        height: `${Math.max(2, (Math.abs(slide.chart!.values[i]) / maximum) * 130)}px`,
-                      }}
-                    />
-                    <small>{label}</small>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <>
-              {slide.layout === 'image' && preview && <img src={preview} alt={slide.title} />}
-              <ul>
-                {slide.body?.map((text, i) => (
-                  <li key={i}>{text}</li>
-                ))}
-              </ul>
-            </>
-          )}
-          <small className="slide-number">{index + 1}</small>
-        </div>
+        <SlidePreview
+          slide={slide}
+          number={index + 1}
+          image={slide.layout === 'image' && preview ? preview : undefined}
+        />
         <form className="slide-fields" onSubmit={(event) => event.preventDefault()}>
           <label className="field">
             <span>Title</span>
@@ -143,30 +193,24 @@ export function DeckEditor({
           </label>
           <label className="field">
             <span>Layout</span>
-            <select
+            <Select
+              label="Layout"
               value={slide.layout}
-              onChange={(event) =>
+              onChange={(layout) =>
                 update({
-                  layout: event.target.value,
-                  ...(event.target.value === 'chart' && !slide.chart
+                  layout,
+                  ...(layout === 'chart' && !slide.chart
                     ? { chart: { labels: ['Build', 'Test'], values: [30, 20] } }
                     : {}),
-                  ...(event.target.value === 'image'
-                    ? { imageId: slide.imageId || images[0]?.id }
-                    : {}),
+                  ...(layout === 'image' ? { imageId: slide.imageId || images[0]?.id } : {}),
                 })
               }
-            >
-              {['title', 'bullets', 'columns', 'image', 'chart'].map((layout) => (
-                <option
-                  key={layout}
-                  value={layout}
-                  disabled={layout === 'image' && images.length === 0}
-                >
-                  {layout}
-                </option>
-              ))}
-            </select>
+              options={['title', 'bullets', 'columns', 'image', 'chart'].map((layout) => ({
+                value: layout,
+                label: layout,
+                disabled: layout === 'image' && images.length === 0,
+              }))}
+            />
           </label>
           {slide.layout === 'columns' ? (
             <>
@@ -238,16 +282,12 @@ export function DeckEditor({
               {slide.layout === 'image' && (
                 <label className="field">
                   <span>Attached image</span>
-                  <select
+                  <Select
+                    label="Attached image"
                     value={slide.imageId ?? ''}
-                    onChange={(event) => update({ imageId: event.target.value })}
-                  >
-                    {images.map((image) => (
-                      <option key={image.id} value={image.id}>
-                        {image.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(imageId) => update({ imageId })}
+                    options={images.map((image) => ({ value: image.id, label: image.name }))}
+                  />
                 </label>
               )}
             </>

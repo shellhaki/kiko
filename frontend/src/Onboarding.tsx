@@ -105,9 +105,10 @@ export function MuseSetup({
           </span>
           <div>
             <strong>Meta Muse</strong>
-            <p>Muse Spark 1.3 Contributor</p>
+            <p>Pick Muse Spark, Ember, or Wonder for each chat after you connect.</p>
             <p className="field-hint">
-              Discounted usage. Meta may use submitted content and responses to train its models.
+              Contributor models are discounted and let Meta use submitted content and responses to
+              train its models. Standard models do not.
             </p>
           </div>
           <Icon icon={Check} />

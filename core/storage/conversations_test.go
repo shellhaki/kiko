@@ -157,13 +157,13 @@ func TestContributorMigrationAndRetryPreserveExistingData(t *testing.T) {
 	if _, err = s.DB().Exec("UPDATE providers SET model='muse-spark-1.3' WHERE id='muse'"); err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := s.StartRun(ctx, "", "", "Keep my chat", "old-request")
-	if err != nil {
+	if _, err = s.DB().Exec(`INSERT INTO chats VALUES ('old-chat',NULL,'Old chat','muse',1);
+		INSERT INTO messages(id,chat_id,role,content,created_at,ordinal) VALUES ('q','old-chat','user','Keep my chat',1,1),('a','old-chat','assistant','Saved partial',1,2);
+		INSERT INTO chat_runs(id,chat_id,user_message_id,assistant_message_id,model,status,error,error_kind,created_at,updated_at) VALUES ('old-run','old-chat','q','a','muse-spark-1.3','error','Try again','provider',1,1);
+		INSERT INTO chat_requests VALUES ('old-request','old-run',1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.UpdateRun(ctx, run, "Saved partial", "error", "Try again", "provider", nil); err != nil {
-		t.Fatal(err)
-	}
+	run := Run{ID: "old-run", ChatID: "old-chat"}
 	if _, err = s.DB().Exec("PRAGMA user_version=4"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +178,9 @@ func TestContributorMigrationAndRetryPreserveExistingData(t *testing.T) {
 	}
 	if err = s.DB().QueryRow("SELECT model FROM chat_runs WHERE id=?", run.ID).Scan(&model); err != nil || model != "muse-spark-1.3" {
 		t.Fatal("historical model changed", err, model)
+	}
+	if err = s.DB().QueryRow("SELECT model FROM chat_models WHERE chat_id=?", run.ChatID).Scan(&model); err != nil || model != "muse-spark-1.3-contributor" {
+		t.Fatal("existing chat lost its model", err, model)
 	}
 	conversation, err := s.Conversation(ctx, "", run.ChatID)
 	if err != nil || len(conversation.Messages) != 2 || conversation.Messages[1].Content != "Saved partial" {

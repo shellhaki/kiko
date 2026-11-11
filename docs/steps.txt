@@ -31,7 +31,9 @@ SOURCE DOCUMENTS
 
 - agents.md: repository working rules.
 - docs/kiko-spec.md: architecture, tool contract, and release scope.
-- docs/design-system.md: authoritative colors, fonts, icons, and styling.
+- docs/design-system.md: colors, fonts, icons, and styling.
+- docs/folder-workspaces.md: current folder roots, file tools, permissions,
+  startup timing, and motion contract (November 9 owner revision).
 - docs/references/screens/README.md: supplied layouts and startup flow.
 - docs/kiko-pitch.md: audience and longer-term product direction.
 
@@ -60,7 +62,8 @@ PHASE A — DECISIONS AND PROJECT FOUNDATION
     - Select the document toolbar/view behavior from references 08/09;
       rich document editing remains the primary experience.
     - Decide whether the optional project file tree belongs in v0.1.
-      Do not assume folders map directly to filesystem directories.
+      Revised November 9: selected folders now define project roots;
+      see docs/folder-workspaces.md for the superseding contract.
     - Specify missing Muse onboarding, settings, and recovery states.
     - Choose the open-source license with the project owner and record
       the decision. Do not silently impose a license.
@@ -174,7 +177,8 @@ PHASE B — SHELL AND FIRST-RUN EXPERIENCE
     could not run: browser host and native inspection pipe unavailable.
 
 [x] 07. Implement startup, splash, and nickname onboarding.
-    - Show the splash during actual initialization, without a fake delay.
+    - Show the splash for at least three seconds and while initialization
+      is pending, per the November 9 owner revision.
     - Route new users through nickname then Muse setup.
     - Validate and save the nickname; support Back and interrupted setup.
     - Returning users skip completed onboarding and keep their data.
@@ -185,7 +189,8 @@ PHASE B — SHELL AND FIRST-RUN EXPERIENCE
     Muse stages resume from SQLite, Back retains nickname and the typed
     in-session key, and completed users skip nickname setup. Tests cover
     startup retry, fresh defaults, interruption/reopen, cleared settings,
-    and reconnect without content deletion. No artificial splash delay.
+    and reconnect without content deletion. Revised November 9: a tested
+    three-second minimum now accompanies real startup loading.
 
 [x] 08. Implement Muse key storage and AI onboarding.
     - Show Meta Muse as the only available provider in v0.1.
@@ -208,8 +213,9 @@ PHASE B — SHELL AND FIRST-RUN EXPERIENCE
     unperformed and is explicitly not claimed.
 
 [x] 09. Implement Home, projects, and chat navigation.
-    - Build the empty Home, New project dialog, project greeting, chat
-      lists, project lists, and All projects view from the references.
+    - Build Home, folder selection, project greeting, chat lists, project
+      lists, and All projects. November 9 replaces New project with the
+      native folder picker and a persisted filesystem root.
     - Create, rename, and remove items with appropriate data handling.
       Apply the standalone chat behavior chosen in 01.
     - Restore selected context and pane preferences after relaunch.
@@ -465,18 +471,23 @@ PHASE F — SETTINGS, EXPORT, AND RELEASE
     Reference revision November 9: slim persistent icon rail, collapsible
     text-led sidebar with Projects above Recents, nested project chats,
     neutral selections, and a continuous chat/document workspace.
-    Home now accepts a draft immediately. The wide bottom composer has
-    a separate project/device context strip, editing mode, model settings,
-    and attachment controls. Lighter headings and quieter icons follow
-    the latest user-supplied screenshot. Sectioned Settings and reduced
-    motion remain. The approved design-system document is unchanged.
-    Validation: 58 frontend tests, format/lint/type/build checks, native
-    build, and headless desktop/mobile editing and export checks pass.
-    Narrow splits and 640x480 Home were checked. Attachment previews
-    cannot submit a draft; the jump control stays inside chat history.
+    Home accepts drafts and imports immediately. The bottom composer now
+    has one folder workspace selector, file permissions, real model
+    settings, and attachment import controls. Removed Personal workspace,
+    This computer, Direct edits, and the duplicate empty project action.
+    Created artifact cards live in their replies; manual/legacy files
+    remain in the chat file group. Settings uses compact native-styled
+    inputs, grouped connections, and scroll resets between sections.
+    Existing design-system styling remains pending owner approval.
+    Validation November 9: the complete quality suite passed, including
+    74 frontend tests and Go race tests. Native build/signature verification
+    and the packaged export/import smoke suite passed. Headless desktop/mobile checks exercised a
+    local fixture model through real agent file tools, approval/denial,
+    Full access confirmation, disk writes, source copies, generated cards,
+    animated sidebar collapse/expand, reduced motion, and Home import
+    preserving a draft. No paid model calls were made.
     Review images: docs/assets/ui-remodel-home.png,
     docs/assets/ui-remodel-review.png, and ui-remodel-settings.png.
-    No paid model calls were made.
     User visual approval and the full native accessibility pass remain
     required before this step can be marked done.
     - Compare screens against their layout references and Codex styling.
@@ -491,6 +502,29 @@ PHASE F — SETTINGS, EXPORT, AND RELEASE
         scroll saves cannot overwrite the released layout. Reduced motion
         bypasses transitions. 64 frontend tests and rendered motion checks
         pass; document edits/exports still pass the browser smoke checks.
+    [x] Folder-workspace revision: native picker, canonical project roots,
+        preserved legacy data, chat-inherited roots, and one composer
+        workspace selector. UI project creation form and duplicate action
+        removed. See docs/folder-workspaces.md for exact current scope.
+    [x] Scoped file tools: list/read/write text, root-relative subfolders,
+        SHA-256 overwrite guards, os.Root confinement, real ask/full modes,
+        cancel-safe approval dialogs, and saved source copies for editable
+        documents, sheets, and decks. Failed copies retain local content
+        and offer a guarded retry. Removing Kiko data keeps disk files.
+    [x] UX revision: three-second startup minimum, smooth scroll/follow,
+        mounted sidebar enter/exit transitions, immediate typing with
+        coalesced draft persistence, and reduced-motion support.
+    [x] Workspace completion (November 9): collapsible real folder explorer,
+        text editing with recoverable drafts and guarded saves, custom
+        document/sheet/deck source paths, linked imports, and explicit
+        comparison/load/save choices for external changes. 81 frontend
+        tests, Go race checks, native build/signature verification, and
+        packaged export/import checks pass. Disposable browser checks
+        covered the complete workflow, retained revision history, project
+        draft preservation, recovered text, and desktop/light/mobile UI.
+        Mobile Save/Close bounds and real navigation saves were verified.
+        Terminal execution, file move/rename, automatic merging, and
+        directory relocation/reconnection remain separate scope.
     Done when: the core flow has no missing states or inaccessible actions
     in the reviewed environments; record any platform not yet checked.
 
@@ -590,9 +624,15 @@ until their remaining validation/scope requirements are satisfied.
         image/chart layouts; atomic saves and recoverable drafts.
     [x] PPTX editable text/bar shapes/media/notes, 16:9 PDF, scoped images;
         XML/package tests and real one-page-per-slide compiler checks.
+    [x] PPTX engine replaced with PptxGenJS in the editor (pattern: OpenAI
+        slides skill): shared theme/geometry between side preview and file,
+        editable text, native bar charts, embedded media; vitest proves slide
+        count, native bullets/charts/images, theme fonts and on-canvas
+        geometry. Desktop writes bytes via native save dialog; web downloads
+        from the browser. Server PPTX export now directs to the preview.
     [ ] Open exported decks in PowerPoint/LibreOffice and review layouts,
-        fonts and overflow. Native chart data objects are outside the
-        implemented editable-shape chart scope.
+        fonts and overflow (structure is machine-verified; visual appearance
+        in real Office is not).
 
 [ ] L4. Later personal-web and suggestion scope.
     [x] Scope one owner's self-hosted workspace before building;
@@ -629,13 +669,18 @@ Direct page and diagram images are now implemented for exact-model
 OpenAI/Anthropic opt-in, plus a local PDF-preview fallback. Office visual
 conversion, OCR reconstruction and Files API reuse remain unfinished.
 
-Current automated evidence: 51 frontend tests; strict TypeScript and
-production build; Go formatting/vet/race across all packages; real
-Typst PDF, diagram, and slide-page checks. macOS Apple Silicon packaging,
-runtime bundling and deep/strict ad-hoc signature verification pass.
-The packaged app also passed isolated HTTP smoke checks for login/RPC,
-sheet calculation/XLSX, DOCX/PDF, PDF worker import/render, slide PPTX/PDF,
-and logout. Tests use temporary data and synthetic credentials.
+Current automated evidence: 89 frontend tests (including PptxGenJS slide
+generation, side-preview parity and the PPTX editor-export contract);
+strict TypeScript and production build; Go formatting/vet/race across all
+packages; real Typst PDF, diagram, and slide-page checks. macOS Apple
+Silicon packaging, runtime bundling and deep/strict ad-hoc signature
+verification pass. The packaged app also passed isolated HTTP smoke checks
+for login/RPC, sheet calculation/XLSX, DOCX/PDF, PDF worker import/render,
+slide PDF plus the slide PPTX editor contract, and logout. Tests use
+temporary data and synthetic credentials. setup-runtime.mjs is unchanged
+but its Typst download times out from this network, so the bundle keeps
+the previously downloaded copy; the smoke above ran against the freshly
+built binary with that copy in place.
 
 Steps 20 and 22-24 remain open for required native save/open, complete
 visual/accessibility review, live-provider dogfooding, hosted CI,
@@ -644,6 +689,15 @@ hosts are still unavailable; a supplemental headless Chromium pass
 reviewed desktop and 390px layouts, Settings, and real editor saves with
 no uncaught page errors or outer horizontal overflow. It also caught and
 fixed table-initialization revisions and verified editor reopening.
+File tool approvals removed at owner request: folder writes now apply
+directly as basic document CRUD (hash/overwrite/path guards stay); the
+ask/full switcher, approval popover, and related bindings/tests are gone.
+Stale suggestion cards now disable Accept with an outdated note, accept
+runs before the draft flush so a pending edit cannot invalidate it, and a
+server-moved revision removes the dead card with a status line instead of
+dead Retry/Reload actions. The agent prompt now restrains uncommanded tool
+calls and requires commanded work to run to completion without mid-run
+acceptance begging.
 The settings controls also capture selected values before the async save
 guard, fixing suggestion/provider/helper and direct-image toggles. PDFium
 JIT integration runs without Go race instrumentation; the full race suite
@@ -657,3 +711,19 @@ Working preview: http://localhost:34115 while Wails dev is running.
 Packaged local HTTP mode: see docs/web.md. Optional provider setup is
 explicitly potentially billable; the default stays Muse Contributor.
 Update this position as checks finish; keep step numbers stable.
+
+Delete tool: added delete_file (hash-guarded, approval-gated) with migration 011 kind column; writes stay direct; small composer-anchored delete popover. Gate green.
+
+Settings is now its own page with back navigation and focus handling; providers restricted to Meta Muse, ChatGPT, Claude, OpenRouter (backend gate + UI labels). Gate green.
+
+File writes now stream per-file progress (path + size live in the step, Wrote on completion, one file at a time). Gate green.
+
+Redesign pass: time-aware greeting + Recent files on home, accent send button, project pill, refined shell/chat type/steps/settings/pane headers, shared ease-out + press feedback. Gate green.
+
+Free-flow agent: initiative/confidence/narration prompts; document preview deferred until complete (per-doc reveal). Gate green.
+
+Stale suggestions self-heal (rebase-or-withdraw on read/accept); dead review cards gone. Gate green.
+
+Removed document review permissions (suggestion mode/panel/bindings); copy/download buttons show transient confirmation. Gate green.
+
+Agent document/artifact deletion via delete_document/delete_artifact with approval popover. Gate green.

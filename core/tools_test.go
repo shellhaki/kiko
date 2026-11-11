@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"kiko/core/document"
 	"kiko/core/provider"
 	"kiko/core/storage"
 )
@@ -109,6 +110,37 @@ func TestToolScopeMalformedArgumentsAndStepLimit(t *testing.T) {
 		t.Fatal(final.ErrorKind, len(final.Steps))
 	}
 }
+func TestDocumentUpdateAppliesDirectlyWithoutReview(t *testing.T) {
+	s := chatService(t)
+	ctx := context.Background()
+	s.Store.CreateChat(ctx, "")
+	state, _ := s.Store.Snapshot(ctx)
+	chat := state.Selection.ChatID
+	doc, err := s.Store.CreateDocument(ctx, chat, "Plan", "# Plan\n\nDraft", nil, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := s.Store.Preferences(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefs.SuggestionMode = true
+	if err = s.Store.SavePreferences(ctx, prefs); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]any{"doc_id": doc.ID, "ops": []any{map[string]any{"type": "replace", "target": map[string]any{"find": "Draft"}, "text": "Done"}}})
+	output, err := s.executeTool(ctx, storage.Run{ChatID: chat}, provider.ToolCall{Function: provider.Function{Name: "update", Arguments: string(args)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, "suggestion_id") {
+		t.Fatal("update created a review proposal", output)
+	}
+	read, err := s.Store.ReadDocument(ctx, doc.ID, storage.ReadOptions{})
+	if err != nil || read.Document.Rev != 2 || !strings.Contains(read.Markdown, "Done") || len(read.Suggestions) != 0 {
+		t.Fatal("update did not apply directly", read, err)
+	}
+}
 func TestIncompleteToolsNeverExecute(t *testing.T) {
 	s := chatService(t)
 	events := make(chan storage.Message, 10)
@@ -127,5 +159,55 @@ func TestIncompleteToolsNeverExecute(t *testing.T) {
 	docs, _ := s.Store.ChatDocuments(context.Background(), state.Selection.ChatID)
 	if len(docs) > 0 {
 		t.Fatal("incomplete tool executed")
+	}
+}
+func TestGuideSlidesTopicAddsDesignRules(t *testing.T) {
+	s := chatService(t)
+	slides, err := s.executeTool(context.Background(), storage.Run{}, provider.ToolCall{Function: provider.Function{Name: "guide", Arguments: `{"topics":["slides"]}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(slides, "Slides:") || !strings.Contains(slides, "16:9") {
+		t.Fatal("slide design rules missing", slides)
+	}
+	editing, err := s.executeTool(context.Background(), storage.Run{}, provider.ToolCall{Function: provider.Function{Name: "guide", Arguments: `{"topics":["editing"]}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(editing, "Slides:") {
+		t.Fatal("slide rules leaked into editing topic")
+	}
+}
+
+func TestCreateDiagramToolDrawsEditableExcalidrawScene(t *testing.T) {
+	s := chatService(t)
+	ctx := context.Background()
+	s.Store.CreateChat(ctx, "")
+	state, _ := s.Store.Snapshot(ctx)
+	chat := state.Selection.ChatID
+	doc, err := s.Store.CreateDocument(ctx, chat, "Plan", "# Plan", nil, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(arguments string) (string, error) {
+		return s.executeTool(ctx, storage.Run{ChatID: chat}, provider.ToolCall{Function: provider.Function{Name: "create_diagram", Arguments: arguments}})
+	}
+	good := `{"doc_id":"` + doc.ID + `","caption":"Flow","elements":[{"type":"rectangle","id":"a","x":0,"y":0,"width":160,"height":60,"label":{"text":"Client"}},{"type":"rectangle","id":"b","x":300,"y":0,"width":160,"height":60,"label":{"text":"Server"}},{"type":"arrow","start":{"id":"a"},"end":{"id":"b"}}]}`
+	output, err := call(good)
+	if err != nil || !strings.Contains(output, "Diagram") {
+		t.Fatal("diagram was not created", output, err)
+	}
+	read, err := s.Store.ReadDocument(ctx, doc.ID, storage.ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := read.Document.Blocks[len(read.Document.Blocks)-1].Attrs
+	if !strings.Contains(document.String(attrs, "scene"), `"skeleton":true`) || !strings.Contains(document.String(attrs, "svg"), "Server") {
+		t.Fatal("saved diagram lacks scene or SVG", attrs)
+	}
+	for _, bad := range []string{`{"doc_id":"` + doc.ID + `","caption":"x","code":"<svg/>"}`, `{"doc_id":"` + doc.ID + `","caption":"x","elements":[{"type":"arrow","start":{"id":"missing"},"end":{"id":"missing"}}]}`} {
+		if _, err = call(bad); err == nil {
+			t.Fatal("bad diagram accepted", bad)
+		}
 	}
 }

@@ -27,22 +27,11 @@ func (s *Service) sendKey(ctx context.Context, chat string) (string, error) {
 	if prefs.Stage != "done" || prefs.ResetInProgress {
 		return "", errors.New("Finish Meta Muse setup before sending.")
 	}
-	config, err := s.Store.ChatProvider(ctx, chat)
-	if err != nil {
-		return "", err
-	}
-	if config.ID == "ollama" {
-		return "ollama", nil
-	}
-	secrets := s.providerSecrets(config.ID)
-	if secrets == nil {
-		return "", errors.New("Provider key storage is unavailable.")
-	}
-	key, err := secrets.Get()
+	key, err := s.Keys.Get()
 	if err != nil || key == "" {
 		return "", &provider.Error{Kind: "auth", Message: "Reconnect Meta Muse to send messages. Your draft is saved."}
 	}
-	if s.Provider == nil && s.ProviderFactory == nil {
+	if s.Provider == nil {
 		return "", errors.New("The model provider is unavailable.")
 	}
 	return key, nil
@@ -125,17 +114,7 @@ func (s *Service) startReply(ctx context.Context, run storage.Run, created bool,
 		}
 		messages = append(messages, provider.Message{Role: m.Role, Content: content})
 	}
-	config, err := s.Store.Provider(ctx, run.ProviderID)
-	if err != nil {
-		return state, err
-	}
 	client := s.Provider
-	if s.ProviderFactory != nil {
-		client = s.ProviderFactory(config, 0)
-	}
-	if client == nil {
-		return state, errors.New("Provider is unavailable.")
-	}
 	runCtx, cancel := context.WithCancel(ctx)
 	active := &activeRun{client: client, run: run, cancel: cancel, done: make(chan struct{})}
 	for _, message := range state.Messages {

@@ -46,6 +46,16 @@ async function download(kind: string, id: string, format: string, tab = '') {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return true
 }
+export function downloadBlob(name: string, bytes: Uint8Array, mime: string) {
+  const link = document.createElement('a')
+  const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: mime }))
+  link.href = url
+  link.download = name
+  document.body.append(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 const special: Record<string, (...args: unknown[]) => Promise<unknown>> = {
   OpenLink: async (value) => {
     const url = new URL(String(value))

@@ -4,6 +4,10 @@ Implementation status: later-release functionality and its explicit adaptations/
 
 Nov 8, 2026 · @Excel
 
+## Current folder-workspace direction
+
+The owner revised the product flow on November 9, 2026. [Folder workspaces](folder-workspaces.md) is the current contract for project roots, file tools, permissions, generated files, and motion. It supersedes conflicting virtual-project and splash decisions below. The selected folder is the project root; chats remain normal conversations and retain the side-by-side editor. The original release table below records the initial milestone scope rather than current feature availability.
+
 ## Scope
 
 This spec covers **v0.1**: one user, one desktop machine, Muse as the only provider, and documents that the agent writes live and the user can edit. It's designed so that more providers, PDF/DOCX export and the mobile view slot in later without a rewrite.
@@ -14,7 +18,7 @@ This spec covers **v0.1**: one user, one desktop machine, Muse as the only provi
 | Projects, each with chats and documents | Accounts, sync, collaboration |
 | Chat with streaming replies | Voice, images, file uploads |
 | Agent tools: create, update and read documents | Tavily web search plugin (v0.2), diagrams, sheets, slides |
-| Side-by-side editable document pane | Suggestion mode |
+| Side-by-side editable document pane | Review-gated suggestions (retired: edits apply directly) |
 | Muse through the Meta Model API | Other providers (v0.3) |
 | Markdown export | PDF and DOCX (v0.2) |
 | Local storage in SQLite | Cloud backup |
@@ -40,8 +44,9 @@ This spec covers **v0.1**: one user, one desktop machine, Muse as the only provi
 ```text
 React UI (system web view)
   ↕ Wails bindings and events
-Go core: conversations, agent loop, document tools, revisions, export
-  ├─ SQLite: local content and preferences
+Go core: conversations, agent loop, document/file tools, revisions, export
+  ├─ SQLite: local content, preferences, folder roots, permissions
+  ├─ os.Root: confined project files and source copies
   └─ Muse provider → OS keychain + provider HTTPS endpoint
 ```
 
@@ -59,7 +64,7 @@ Recorded November 8, 2026 during build step 01. These are working implementation
 - **Standalone chats are supported.** `chats.project_id` is nullable. New chat from Home creates a standalone chat; New chat inside a project inherits that project. Standalone chats appear in the general chat list, with no invented project name.
 - **Each document belongs to exactly one chat.** `documents.chat_id` is required. Its project is derived from the owning chat, so there is no second project assignment to fall out of sync. A chat may own multiple documents. Moving/sharing documents between chats is outside v0.1.
 - **Restore context explicitly.** Opening a chat restores its messages, activity, artifact list, and last open document. Clicking an artifact opens that document; selecting a document from a project list opens its owning chat and document together. If the saved document is gone, show the chat with its document pane closed.
-- **Project description is optional.** Store it alongside the project name. A project view lists its chats and documents; a flat list is enough for v0.1. The optional folder tree in reference 10 is deferred. It neither introduces disk folders nor changes SQLite storage.
+- **Projects use selected disk folders.** The desktop folder picker creates or reuses a project with a canonical root. Existing virtual projects are preserved for compatibility. See [folder workspaces](folder-workspaces.md) for file storage, permissions, and migration behavior. The optional visual file tree remains deferred.
 - **Deletion has an explicit scope.** Deleting a document removes its blocks, revisions, comments, and nodes. Deleting a chat also removes its documents, messages, activity, and view state. Deleting a project also removes its chats and their content. Show the affected scope before a confirmed deletion and apply it transactionally. Version history restores edits to existing documents; it is not a trash bin for deleted projects/chats/documents.
 
 ### Document pane and toolbar
@@ -70,7 +75,7 @@ The toolbar contains the title, save status, Copy Markdown, Export, Undo, Versio
 
 ### Startup and onboarding
 
-Startup is Splash → local state check → the next required screen. Show actual initialization progress or an indeterminate indicator; do not fake a percentage or impose a splash delay.
+Startup is Splash → local state check → the next required screen. Show actual initialization progress or an indeterminate indicator; use no fake percentage. The owner requested a three-second minimum splash; continue showing it if initialization takes longer.
 
 1. New users enter a nickname in the supplied centered layout. Trim whitespace; require 1–40 Unicode characters and allow ordinary international names. Save the nickname locally and allow Back from the next screen.
 2. AI setup uses that same narrow centered form: “Connect Meta Muse”, a short explanation that the user supplies their own key, a labeled masked API-key field with Show/Hide, and **Connect and continue**. Meta Muse is the only provider choice. Add a verified official key-setup link when step 02 establishes the provider contract. Disclose that connection verification sends a provider request and may use credits.
@@ -126,7 +131,7 @@ The tools copy the shape of Claude's document tools: a few general verbs with ty
 
 | Tool | Arguments | What it does | Release |
 | --- | --- | --- | --- |
-| `create_document` | `name`, `markdown`, `blocks` | Creates the whole skeleton in one call: title, byline, and one pending block per section. The markdown carries `<?kiko block s1?>` tokens, and `blocks` maps each token to `{type: "pending", intent}`. Returns the doc id and an ack with each pending block's id | v0.1 |
+| `create_document` | `name`, `markdown`, `blocks`, optional `path` | Creates the whole skeleton in one call: title, byline, and one pending block per section. The markdown carries `<?kiko block s1?>` tokens, and `blocks` maps each token to `{type: "pending", intent}`. Returns the doc id and an ack with each pending block's id. Optional `path` selects its root-relative `.md` source location | v0.1 |
 | `update` | `doc_id`, `ops[]` | Every change goes through here. Ops are `replace`, `insert`, `delete` and `move`. A target is block ids, or `find` with exact quoted text (plus `nth` when it repeats). Content is `markdown` (re-creates blocks) or `text` (re-words in place and keeps bold, links and chips). Several ops run in order, all or nothing | v0.1 |
 | `read` | `doc_id`, `payload` | Four projections: `outline` (each block's id, hash and first words), `view` + `parentId` (one table or list in full), `search` (text hits), and `sinceRev` (only what changed since a rev, with removed blocks marked gone) | v0.1 |
 | `guide` | `topics[]` | Loads instruction pages on demand (editing rules, diagram rules), so the system prompt stays short | v0.1 |
@@ -159,6 +164,8 @@ Ids after the first are printed short (`.70` means `k3f9.70`), and text is cut t
 
 **On the live feel.** In claude.ai, a tool call shows nothing until it finishes, so the feeling of watching a document fill comes from the one-section-per-call rhythm. Kiko keeps that rhythm. If a provider streams tool-call arguments, Kiko can also render a section word by word, as an extra on top.
 
+The current folder-workspace extension adds `list_files`, `read_file`, `write_file`, and `delete_file` under the selected root. Only deletion pauses for user approval. `delete_document` and `delete_artifact` remove documents, sheets, and decks with the same approval pause; linked workspace file records are unlinked while disk files are left in place. Document, sheet, and deck creation accepts a custom source path. The explorer, text drafts, source imports, and guarded external-version comparisons are described in [folder workspaces](folder-workspaces.md).
+
 ## Safe dual editing
 
 The user and the agent edit the same document, and nothing is locked. Optimistic checks keep them from overwriting each other, and the rule is always that **the user's edit wins**.
@@ -168,7 +175,7 @@ The user and the agent edit the same document, and nothing is locked. Optimistic
 3. **The user's intent is respected.** If a pending block the agent was about to fill now holds the user's own text, the agent drops its write. If the user deleted a pending block (`block_gone`), that section isn't wanted, and the agent never re-creates it.
 4. **Catch-up reads.** Each later turn starts with `read` + `sinceRev`, which returns only changed blocks and marks removed ones gone. The agent works from that, not from its memory of the document.
 5. **Comments are protected.** An edit that would remove words a comment is anchored to is refused with `anchors_affected`, unless the user asked for that change.
-6. **Suggestion mode (v1.0).** With `suggest: true`, the agent's edits are laid in the document as proposed insertions and deletions. The user accepts or rejects each one.
+6. **Direct edits (suggestion mode retired).** The agent's edits apply immediately; there is no proposal queue and no accept/reject step. The only ask path is the anchored comment question in chat.
 7. **Nothing is ever lost.** Every rev is kept. The agent can `read` a past version with `atRev` and re-insert deleted text from it, never retyping from memory. The user can restore any earlier version from history.
 
 ## Provider layer
@@ -177,7 +184,7 @@ The agent loop talks to one interface. Each provider is just a config entry plus
 
 ```go
 type Provider interface {
-    ID() string                 // "muse", "openrouter", "ollama"...
+    ID() string                 // "muse", "openai", "anthropic", "openrouter"
     Stream(ctx context.Context, req ChatRequest) (<-chan ChatEvent, error)
 }
 
@@ -315,7 +322,8 @@ The agent can also make a plain file when the user names a format ("give me an E
 
 - **XLSX:** [excelize](https://github.com/xuri/excelize), a mature pure-Go library. Its built-in formula calculation also powers live formula results in the Sheet editor, so the same engine computes in the app and in the exported file.
 - **PDF:** [Typst](https://github.com/typst/typst) bundled as a small binary. The core turns a doc or deck into Typst markup and compiles it. That gives proper typography, tables, page numbers, headers and a cover page, well beyond printing HTML.
-- **DOCX and PPTX:** a small hand-written OOXML generator (Go templates inside a zip). The free Go libraries for these formats are unmaintained or commercially licensed, and the structures Kiko needs are limited.
+- **DOCX:** a small hand-written OOXML generator (Go templates inside a zip). The free Go libraries for this format are unmaintained or commercially licensed, and the structures Kiko needs are limited.
+- **PPTX:** [PptxGenJS](https://github.com/gitbrent/PptxGenJS) running in the editor: the slide preview and the exported file share one theme and geometry, text stays editable text and charts stay native charts. The desktop app writes the bytes through the native save dialog; the web version downloads them from the browser. PDF still compiles from the Go core through Typst.
 - **Markdown and CSV:** plain Go.
 
 **Skills.** Each artifact type, export format and plugin ships a `SKILL.md`: short instructions on doing that job well (how to structure a spec, how to build a clean financial sheet, how to lay out a slide). They follow the open Agent Skills format: a name and description the agent always sees, and a body loaded only through `guide()` when the task needs it. Users can drop community skills into a skills folder, and the agent finds them the same way.
@@ -532,9 +540,9 @@ All exports start from the same source: the document's sections joined as Markdo
 | PDF | Convert the doc to Typst markup and compile it with the bundled Typst binary | v0.2 |
 | DOCX | Hand-written OOXML generator: Go templates inside a zip | v0.2 |
 | XLSX, CSV | excelize, from the Sheet artifact | v0.3 |
-| PPTX | Hand-written OOXML generator, from the Slides artifact | v0.4 |
+| PPTX | PptxGenJS, from the Slides artifact preview (desktop: native save dialog, web: browser download) | v0.4 |
 
-All export code lives in the Go core, so the web version gets it for free. See Artifact types and document skills for why each library was chosen.
+All export code lives in the Go core except slides, which generate in the editor so the preview and the file match. See Artifact types and document skills for why each library was chosen.
 
 ## Security and keys
 

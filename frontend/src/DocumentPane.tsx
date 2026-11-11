@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react'
 import { usePaneResize } from './use-pane-resize'
 import type { Question, State } from './api'
 import { questionHighlights } from './document-questions'
 import { requestId } from './conversation-state'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Node } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
@@ -24,6 +25,7 @@ import {
   Maximize2,
   Minimize2,
   Save,
+  Shapes,
   X,
 } from 'lucide-react'
 import { desktop } from './api'
@@ -31,12 +33,19 @@ import { Button, Dialog, Icon, IconButton, PaneHeader } from './components/ui'
 import { fromEditor, toEditor } from './document-model'
 import type { Block, DocumentRead, DocumentView } from './document-model'
 import { registerDocumentSave } from './document-session'
+import type { DiagramResult } from './DiagramCanvas'
+const DiagramCanvas = lazy(() => import('./DiagramCanvas'))
 
 const Diagram = Node.create({
   name: 'diagram',
   group: 'block',
   atom: true,
-  addAttributes: () => ({ svg: { default: '' }, caption: { default: '' }, ref: { default: '' } }),
+  addAttributes: () => ({
+    svg: { default: '' },
+    scene: { default: '' },
+    caption: { default: '' },
+    ref: { default: '' },
+  }),
   parseHTML: () => [{ tag: 'figure[data-diagram]' }],
   renderHTML: ({ HTMLAttributes }) => [
     'figure',
@@ -84,7 +93,9 @@ export function DocumentPane({
   id,
   close,
   onState,
+  sourceControls,
 }: {
+  sourceControls?: ReactNode
   id: string
   close(): Promise<void>
   onState(value: State): void
@@ -118,22 +129,38 @@ export function DocumentPane({
         )}
       </aside>
     )
-  return <EditableDocument key={id} initial={data} close={close} onState={onState} />
+  return (
+    <EditableDocument
+      key={id}
+      initial={data}
+      close={close}
+      onState={onState}
+      sourceControls={sourceControls}
+    />
+  )
 }
 function EditableDocument({
   initial,
   close,
   onState,
+  sourceControls,
 }: {
+  sourceControls?: ReactNode
   initial: DocumentRead
   close(): Promise<void>
   onState(value: State): void
 }) {
   const [saved, setSaved] = useState(initial.document)
-  const [suggestions, setSuggestions] = useState(initial.suggestions ?? [])
   const [exportFormats, setExportFormats] = useState<string[] | null>(null)
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
   const [diagramDraft, setDiagramDraft] = useState<{ svg: string; caption: string } | null>(null)
   const [diagramError, setDiagramError] = useState('')
+  const [canvasDraft, setCanvasDraft] = useState<{
+    scene: string
+    caption: string
+    insert: boolean
+  } | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [answerError, setAnswerError] = useState('')
   const [answering, setAnswering] = useState(false)
@@ -143,6 +170,7 @@ function EditableDocument({
   const [view, setView] = useState<DocumentView>(initial.view ?? {})
   const [status, setStatus] = useState(initial.draft ? 'Unsaved draft recovered' : 'Saved')
   const [error, setError] = useState('')
+  const [conflicted, setConflicted] = useState(false)
   const [history, setHistory] = useState<
     { rev: number; author: string; createdAt: number }[] | null
   >(null)
@@ -158,6 +186,7 @@ function EditableDocument({
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const scroll = useRef<HTMLDivElement>(null)
   const viewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mounted = useRef(true)
   const editor = useEditor({
     extensions: [
@@ -240,6 +269,7 @@ function EditableDocument({
             setSaved(next)
             setStatus(dirtyRef.current ? 'Unsaved changes' : 'Saved')
             setError('')
+            setConflicted(false)
           }
         }
         const next = await desktop().ReadDocument(current.current.id, {})
@@ -249,6 +279,12 @@ function EditableDocument({
           setStatus('Not saved')
           setError(String(problem instanceof Error ? problem.message : problem))
         }
+        void desktop()
+          .ReadDocument(current.current.id, {})
+          .then((next) => {
+            if (mounted.current && next.document.rev !== baseRev.current) setConflicted(true)
+          })
+          .catch(() => {})
         throw problem
       }
     })()
@@ -266,6 +302,7 @@ function EditableDocument({
       mounted.current = false
       clearTimeout(timer.current)
       clearTimeout(viewTimer.current)
+      clearTimeout(copiedTimer.current)
     }
   }, [])
   useEffect(() => {
@@ -291,7 +328,6 @@ function EditableDocument({
         .ReadDocument(current.current.id, {})
         .then((next) => {
           if (!mounted.current || dirtyRef.current) return
-          setSuggestions(next.suggestions ?? [])
           if (next.document.rev === current.current.rev) return
           const selection = editor?.state.selection
           const known = new Set<string>()
@@ -372,7 +408,13 @@ function EditableDocument({
     try {
       await flush()
       await desktop().CopyDocument(saved.id)
+      if (!mounted.current) return
       setStatus('Markdown copied')
+      setCopied(true)
+      clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => {
+        if (mounted.current) setCopied(false)
+      }, 1500)
     } catch {
       setError('Couldn’t copy. Save changes and try again.')
     }
@@ -392,6 +434,7 @@ function EditableDocument({
       setMarkdown(next.markdown)
       setDirty(false)
       setError('')
+      setConflicted(false)
       setStatus('Saved')
     } catch {
       setError('Couldn’t reload the saved document.')
@@ -478,7 +521,11 @@ function EditableDocument({
               .catch((problem) => setError(String(problem)))
           }
         />
-        <IconButton icon={Copy} label="Copy Markdown" onClick={() => void copy()} />
+        <IconButton
+          icon={copied ? Check : Copy}
+          label="Copy Markdown"
+          onClick={() => void copy()}
+        />
         <IconButton
           icon={view.focus ? Minimize2 : Maximize2}
           label={view.focus ? 'Restore split view' : 'Focus document'}
@@ -488,9 +535,14 @@ function EditableDocument({
           icon={X}
           label="Close document"
           onClick={() =>
-            void flush()
-              .then(close)
-              .catch(() => {})
+            void flush().then(close, () =>
+              queue.current
+                .catch(() => {})
+                .then(() => {
+                  clearTimeout(timer.current)
+                  return close()
+                }),
+            )
           }
         />
       </PaneHeader>
@@ -515,10 +567,19 @@ function EditableDocument({
       {error && (
         <div className="document-notice" role="alert">
           <p>{error}</p>
-          <Button variant="secondary" onClick={() => void flush().catch(() => {})}>
-            <Icon icon={Save} size={14} />
-            Retry save
-          </Button>
+          {!conflicted && (
+            <Button variant="secondary" onClick={() => void flush().catch(() => {})}>
+              <Icon icon={Save} size={14} />
+              Retry save
+            </Button>
+          )}
+          {conflicted && (
+            <p className="field-hint">
+              Copy your draft first — retrying cannot overwrite the newer saved version. If the
+              assistant is still writing, stop it before reloading, or your next edit will conflict
+              again.
+            </p>
+          )}
           <Button variant="ghost" onClick={() => void reload()}>
             Reload saved version
           </Button>
@@ -527,17 +588,39 @@ function EditableDocument({
       {view.tab !== 'markdown' && (
         <div className="format-toolbar" aria-label="Text formatting">
           {editor?.isActive('diagram') && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                const attrs = editor.getAttributes('diagram')
-                setDiagramDraft({ svg: String(attrs.svg), caption: String(attrs.caption) })
-                setDiagramError('')
-              }}
-            >
-              Edit diagram
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  const attrs = editor.getAttributes('diagram')
+                  setCanvasDraft({
+                    scene: String(attrs.scene),
+                    caption: String(attrs.caption),
+                    insert: false,
+                  })
+                }}
+              >
+                {editor.getAttributes('diagram').scene ? 'Edit diagram' : 'Redraw in Excalidraw'}
+              </Button>
+              {!editor.getAttributes('diagram').scene && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    const attrs = editor.getAttributes('diagram')
+                    setDiagramDraft({ svg: String(attrs.svg), caption: String(attrs.caption) })
+                    setDiagramError('')
+                  }}
+                >
+                  Edit SVG source
+                </Button>
+              )}
+            </>
           )}
+          <IconButton
+            icon={Shapes}
+            label="Draw diagram"
+            onClick={() => setCanvasDraft({ scene: '', caption: '', insert: true })}
+          />
           <IconButton
             icon={Bold}
             label="Bold"
@@ -565,6 +648,7 @@ function EditableDocument({
           />
         </div>
       )}
+      {sourceControls}
       <div
         className="document-scroll"
         ref={scroll}
@@ -586,61 +670,6 @@ function EditableDocument({
           <EditorContent editor={editor} />
         )}
       </div>
-      {!!suggestions.length && (
-        <section className="suggestion-panel" aria-label="Suggested changes">
-          <h2>Suggested changes</h2>
-          {suggestions.map((proposal) => (
-            <details key={proposal.id}>
-              <summary>Review change from revision {proposal.baseRev}</summary>
-              <div className="suggestion-comparison">
-                <div>
-                  <strong>Current at proposal</strong>
-                  <pre>{proposal.before}</pre>
-                </div>
-                <div>
-                  <strong>Proposed</strong>
-                  <pre>{proposal.after}</pre>
-                </div>
-              </div>
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  void flush()
-                    .then(() => desktop().AcceptSuggestion(proposal.id))
-                    .then((next) => {
-                      current.current = next
-                      baseRev.current = next.rev
-                      blocks.current = next.blocks
-                      setSaved(next)
-                      editor?.commands.setContent(toEditor(next.blocks), { emitUpdate: false })
-                      setSuggestions((value) => value.filter((item) => item.id !== proposal.id))
-                      setStatus('Suggestion accepted')
-                      void desktop()
-                        .ReadDocument(saved.id, {})
-                        .then((value) => setMarkdown(value.markdown))
-                    })
-                    .catch((problem) => setError(String(problem)))
-                }
-              >
-                Accept change
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  void desktop()
-                    .RejectSuggestion(proposal.id)
-                    .then(() =>
-                      setSuggestions((value) => value.filter((item) => item.id !== proposal.id)),
-                    )
-                    .catch((problem) => setError(String(problem)))
-                }
-              >
-                Reject
-              </Button>
-            </details>
-          ))}
-        </section>
-      )}
       {questions.some((q) => !q.resolved) && (
         <section className="question-panel" aria-label="Document questions">
           {questions
@@ -697,6 +726,38 @@ function EditableDocument({
           {answerError && <p role="alert">{answerError}</p>}
         </section>
       )}
+      <Dialog
+        className="diagram-dialog"
+        open={canvasDraft !== null}
+        onOpenChange={(open) => {
+          if (!open) setCanvasDraft(null)
+        }}
+        title="Draw diagram"
+        description="Sketch with Excalidraw. The drawing stays editable and is exported with your document."
+      >
+        {canvasDraft && (
+          <Suspense fallback={<p role="status">Loading drawing board…</p>}>
+            <DiagramCanvas
+              scene={canvasDraft.scene}
+              caption={canvasDraft.caption}
+              onApply={(result: DiagramResult) => {
+                const attrs = { ...result }
+                if (canvasDraft.insert)
+                  editor
+                    ?.chain()
+                    .focus()
+                    .insertContent({
+                      type: 'diagram',
+                      attrs: { ...attrs, ref: crypto.randomUUID() },
+                    })
+                    .run()
+                else editor?.chain().focus().updateAttributes('diagram', attrs).run()
+                setCanvasDraft(null)
+              }}
+            />
+          </Suspense>
+        )}
+      </Dialog>
       <Dialog
         open={diagramDraft !== null}
         onOpenChange={(open) => {
@@ -757,17 +818,30 @@ function EditableDocument({
             <Button
               key={format}
               variant="secondary"
-              onClick={() =>
+              disabled={exporting !== null}
+              onClick={() => {
+                setExporting(format)
                 void flush()
                   .then(() => desktop().ExportDocumentFormat(saved.id, format))
                   .then((done) => {
                     setExportFormats(null)
-                    if (done) setStatus('Exported')
+                    if (done && mounted.current) setStatus('Exported')
                   })
-                  .catch((problem) => setError(String(problem)))
-              }
+                  .catch((problem) => {
+                    if (mounted.current) setError(String(problem))
+                  })
+                  .finally(() => {
+                    if (mounted.current) setExporting(null)
+                  })
+              }}
             >
-              {format === 'md' ? 'Markdown' : format === 'docx' ? 'Word document' : 'PDF document'}
+              {exporting === format
+                ? 'Preparing…'
+                : format === 'md'
+                  ? 'Markdown'
+                  : format === 'docx'
+                    ? 'Word document'
+                    : 'PDF document'}
             </Button>
           ))}
         </div>

@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { MoreHorizontal, X } from 'lucide-react'
+import { Check, ChevronDown, Copy, MoreHorizontal, X } from 'lucide-react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import * as Dropdown from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -51,6 +51,28 @@ export function Button({
   ...props
 }: ComponentProps<'button'> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' }) {
   return <button type="button" className={`button ${variant} ${className}`} {...props} />
+}
+export function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  return (
+    <IconButton
+      icon={copied ? Check : Copy}
+      label={copied ? 'Copied' : label}
+      disabled={!text}
+      onClick={() => {
+        void navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setCopied(true)
+            clearTimeout(timer.current)
+            timer.current = setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => {})
+      }}
+    />
+  )
 }
 export function IconButton({
   icon,
@@ -143,6 +165,55 @@ export function ItemMenu({
           <Dropdown.Item className="danger-text" onSelect={onDelete}>
             Delete
           </Dropdown.Item>
+        </Dropdown.Content>
+      </Dropdown.Portal>
+    </Dropdown.Root>
+  )
+}
+export function Select({
+  label,
+  value,
+  onChange,
+  options,
+  disabled,
+  className = '',
+}: {
+  label: string
+  value: string
+  onChange(value: string): void
+  options: { value: string; label: string; hint?: string; disabled?: boolean }[]
+  disabled?: boolean
+  className?: string
+}) {
+  const current = options.find((option) => option.value === value)
+  return (
+    <Dropdown.Root>
+      <Dropdown.Trigger asChild>
+        <button
+          type="button"
+          className={`select-trigger ${className}`}
+          aria-label={label}
+          disabled={disabled}
+        >
+          <span>{current?.label ?? value}</span>
+          <Icon icon={ChevronDown} size={13} />
+        </button>
+      </Dropdown.Trigger>
+      <Dropdown.Portal>
+        <Dropdown.Content className="menu" sideOffset={6} align="start">
+          {options.map((option) => (
+            <Dropdown.Item
+              key={option.value}
+              disabled={option.disabled}
+              onSelect={() => onChange(option.value)}
+            >
+              <span className="option-text">
+                {option.label}
+                {option.hint && <small>{option.hint}</small>}
+              </span>
+              {option.value === value && <Icon icon={Check} size={14} />}
+            </Dropdown.Item>
+          ))}
         </Dropdown.Content>
       </Dropdown.Portal>
     </Dropdown.Root>

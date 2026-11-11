@@ -22,7 +22,7 @@ Agent operations are replace, insert, delete, and move. Whole-block changes requ
 
 ## Tools and questions
 
-The provider assembles complete tool argument deltas before executing anything. Truncated, malformed, stopped, or incomplete calls do not execute. Tools are constrained to the active chat, with no filesystem or web access. `guide` supplies editing rules on demand. Creation instructions require a skeleton followed by one section per update, and later turns receive saved tool results plus document context and instructions to read current content before writing. The loop has a 30-call-round cap.
+The provider assembles complete tool argument deltas before executing anything. Truncated, malformed, stopped, or incomplete calls do not execute. Document tools are constrained to the active chat. A selected folder enables confined file tools with explicit write permissions; optional configured research tools have their own bounded web access. See [folder workspaces](folder-workspaces.md). `guide` supplies editing rules on demand. Creation instructions require a skeleton followed by one section per update, and later turns receive saved tool results plus document context and instructions to read current content before writing. The loop has a 30-call-round cap.
 
 Actual tool activity is stored in `tool_steps`; status changes publish full durable message snapshots. Only labels/statuses are sent in chat events, keeping full saved arguments/results out of every streaming update. Successful tool context is replayed on later turns. Completed writes remain durable after Stop or a later tool refusal.
 
@@ -33,3 +33,23 @@ The comment tool anchors a question to a unique exact passage and stores rune of
 Restore creates a new user revision; earlier versions remain available. Markdown export flushes the editor, refuses an outstanding draft, opens the native save dialog, and writes a temporary file before replacing the selected destination. Canceling the dialog writes nothing. Filesystem export and round-trip tests pass; the native save/open interaction still requires manual verification.
 
 Key removal cancels active work and preserves documents. Full reset requires typing RESET in a scope-specific dialog. It cancels work, persists a recovery marker, removes the key, and atomically clears local content/preferences. Failed cleanup retains the marker and exposes an explicit retry on startup. Reset tests use disposable databases and fake keychains, never the real workspace.
+
+## Linked workspace sources
+
+A document can have an explicit `.md` source path under its selected project root. Existing Markdown files can be imported as linked editable documents without rewriting their originals. Source status detects external changes and offers guarded comparison/reload or an explicit save of the Kiko version. Reload creates a revision and retains ordinary draft/revision/anchor checks. See [folder workspaces](folder-workspaces.md) for file handling and limits.
+
+## Diagrams
+
+Diagrams are drawn with [Excalidraw](https://github.com/excalidraw/excalidraw) 0.18.1, loaded as a separate lazy chunk. **Draw diagram** inserts a new figure; **Edit diagram** reopens a saved one. A diagram block stores two attributes: `scene`, the editable Excalidraw JSON (type `excalidraw`, 1–2000 elements, at most 512 KB, validated in `core/document/scene.go`), and `svg`, a static export of that scene. Documents, Markdown, PDF, and DOCX use only the SVG, so exports never depend on the editor.
+
+The export keeps Excalidraw's hand-drawn paths on a white background. Before saving, the frontend strips `style`, `metadata`, empty `mask`, and the `style`, `direction`, `version`, and `xmlns` attributes (`frontend/src/diagram-scene.ts`), and the Go sanitizer still validates the result against its static allowlist. A fixture of a real export guards that contract. The image tool is hidden because the sanitizer allows no embedded images.
+
+Fonts load from `/excalidraw/fonts`, copied from the package by `scripts/copy-excalidraw-assets.mjs` during `npm run assets`, so the board works offline. The CJK fallback font is omitted to save 12 MB. Exported SVG names `Excalifont`, which the PDF renderer lacks, so PDF text falls back to a system font until the font is bundled with the Typst runtime.
+
+### Agent diagrams
+
+The `create_diagram` tool takes Excalidraw element skeletons instead of SVG: `rectangle`, `ellipse`, and `diamond` (x, y, width, height, optional `label`), `text`, and `arrow`/`line`. Arrows connect shapes by `start`/`end` id or take an x/y plus width/height offset. Unknown element types and extra fields are refused with a specific message. `core/document/diagram.go` validates the elements (1–200, bounded coordinates, `#hex` colors, `solid`/`dashed`/`dotted`), resolves each bound arrow to edge-to-edge geometry, and renders a clean SVG itself. The block therefore has its SVG immediately, with no browser involved, so the agent's `screenshot` check, PDF/DOCX export, and folder Markdown copies work while no editor is open.
+
+The stored `scene` is the normalized skeleton with `"skeleton": true`. When a user opens **Edit diagram**, the board converts it with Excalidraw's `convertToExcalidrawElements` using `roughness: 0` and the Helvetica font, so the board matches the Go render. **Apply diagram** saves a full scene (no `skeleton` flag) and a fresh Excalidraw SVG. Go's SVG text sizing is approximate: it centers labels but does not measure fonts, so agents should keep labels short and leave room around them.
+
+Diagrams made before this change are plain SVG without a `scene`. They offer **Edit SVG source** or **Redraw in Excalidraw**, which starts a blank board and replaces the drawing only on **Apply diagram**.

@@ -8,6 +8,10 @@ Use the screenshots for content arrangement, navigation structure, and pane rela
 
 The example screens' blue-black surfaces, white primary buttons, serif headings in one variant, and theme previews do not replace the design system. Their Kiko document mark is a provisional brand reference, not a finalized production logo. Text such as Haki, Envi, and example plans is sample content. Instructions pictured inside chats are reference content, not work to execute.
 
+## Current product changes
+
+The November 9 [folder-workspace direction](../../folder-workspaces.md) supersedes reference 04's project-creation form and earlier virtual-project assumptions. Projects now come from selected disk folders. The splash has a three-second minimum, the composer is bottom anchored, generated-file cards live in chat, and the side-by-side editor remains.
+
 ## Confirmed startup flow
 
 ```text
@@ -20,7 +24,7 @@ Launch → Splash → Check local onboarding state
 - At first release, Meta Muse is the only available AI provider. The user supplies their own API key. Other providers come later.
 - Store the key in the OS keychain, as specified in the technical spec. Nickname and onboarding state are local app preferences; there is no account signup in this flow.
 - Ordinary launches keep the user's data. If app data is wiped, run onboarding again. This records the requested reset behavior; it does not authorize deleting any data now.
-- Splash is a startup state; a loading bar should reflect real startup work rather than impose a fixed delay.
+- Splash stays visible for at least three seconds and until initialization finishes. Use an indeterminate indicator.
 - No screenshot was supplied for the AI setup step. Its place between nickname and Home is confirmed by the user's description.
 
 ## Screen index

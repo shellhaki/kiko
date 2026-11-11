@@ -59,28 +59,8 @@ func (s *Service) Reset(ctx context.Context) error {
 			return errors.New("Reset paused: couldn’t remove the Tavily key. Unlock your keychain and retry reset.")
 		}
 	}
-	if s.SecretFor != nil {
-		configs, err := s.Store.Providers(ctx)
-		if err != nil {
-			return err
-		}
-		for _, config := range configs {
-			if config.ID != "muse" {
-				if err = s.SecretFor(config.ID).Delete(); err != nil {
-					return errors.New("Reset paused while removing provider keys. Retry reset.")
-				}
-			}
-		}
-	}
 	if err = s.Store.ResetData(ctx); err != nil {
 		return errors.New("The key was removed, but local data cleanup failed. Retry reset to finish.")
 	}
 	return nil
-}
-func (s *Service) SetModel(ctx context.Context, model string) error {
-	if model != "muse-spark-1.3-contributor" {
-		return errors.New("Only Muse Spark 1.3 Contributor is available in this release.")
-	}
-	_, err := s.Store.DB().ExecContext(ctx, "UPDATE providers SET model=? WHERE id='muse'", model)
-	return err
 }

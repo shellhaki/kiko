@@ -28,3 +28,4 @@ docs/references/**/*.png
 /frontend/package.json.md5
 
 /frontend/public/pdfjs/
+/frontend/public/excalidraw/

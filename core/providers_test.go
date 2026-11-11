@@ -4,90 +4,68 @@ import (
 	"context"
 	"testing"
 
+	"kiko/core/muse"
 	"kiko/core/provider"
 	"kiko/core/storage"
 )
 
-func TestExplicitProviderSelectionIsIsolatedAndBounded(t *testing.T) {
+func TestModelChoiceIsPerChatAndLimitedToTheMuseCatalog(t *testing.T) {
 	s := chatService(t)
 	ctx := context.Background()
-	keys := map[string]*fakeSecrets{}
-	s.SecretFor = func(id string) Secrets {
-		if keys[id] == nil {
-			keys[id] = &fakeSecrets{}
-		}
-		return keys[id]
-	}
-	s.ProviderFactory = func(config storage.ProviderConfig, maxTokens int) provider.Provider {
-		if config.ID != "openai" || maxTokens != 256 {
-			t.Error("verification not bounded", config.ID, maxTokens)
-		}
-		return replyProvider(func(ctx context.Context, request provider.Request, emit func(provider.Event) error) error {
-			if request.Key != "openai-fixture" {
-				t.Error("wrong key")
-			}
-			emit(provider.Event{Text: "READY"})
-			return emit(provider.Event{Finish: "stop"})
-		})
-	}
-	if err := s.ConfigureProvider(ctx, "openai", "chosen-model", "openai-fixture", ""); err != nil {
+	if err := s.Store.CreateChat(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	prefs, _ := s.Store.Preferences(ctx)
-	if prefs.ProviderID != "openai" {
-		t.Fatal(prefs)
+	first, _ := s.State(ctx)
+	if first.Model != muse.DefaultModel || len(first.Models) != len(muse.Models) {
+		t.Fatal("new chats start on the default model with the full catalog", first.Model, len(first.Models))
 	}
-	if key, _ := s.Keys.Get(); key != "fixture-key" {
-		t.Fatal("Muse key changed")
+	if err := s.SetModel(ctx, "muse-ember-1.0"); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.Store.CreateChat(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	state, err := s.State(ctx)
-	if err != nil || state.Provider.ID != "openai" || !state.Connected {
-		t.Fatal(err, state.Provider)
+	second, _ := s.State(ctx)
+	if second.Model != "muse-ember-1.0" {
+		t.Fatal("a new chat should start on the last chosen model", second.Model)
 	}
-	if err := s.ConfigureProvider(ctx, "muse", "muse-spark-1.3", "fixture", ""); err == nil {
-		t.Fatal("Standard Muse substitution accepted")
+	if err := s.SetModel(ctx, "muse-spark-1.3"); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.ConfigureProvider(ctx, "ollama", "local", "", "http://remote.example/v1"); err == nil {
-		t.Fatal("remote loopback override accepted")
+	if err := s.Store.Select(ctx, "", first.Selection.ChatID); err != nil {
+		t.Fatal(err)
+	}
+	back, _ := s.State(ctx)
+	if back.Model != "muse-ember-1.0" {
+		t.Fatal("changing one chat's model changed another", back.Model)
+	}
+	for _, bad := range []string{"", "gpt-4o", "muse-spark-9", "muse-spark-1.3-contributor "} {
+		if err := s.SetModel(ctx, bad); err == nil {
+			t.Fatal("unlisted model accepted:", bad)
+		}
 	}
 }
 
-func TestDirectImagesRequireExplicitOptInForTheExactModel(t *testing.T) {
+func TestSendUsesTheModelChosenForThatChat(t *testing.T) {
 	s := chatService(t)
 	ctx := context.Background()
-	config := storage.ProviderConfig{ID: "openai", Format: "openai-chat", BaseURL: ProviderEndpoints["openai"], Model: "fixture-vision"}
-	if err := s.Store.SaveProvider(ctx, config); err != nil {
+	s.Store.CreateChat(ctx, "")
+	if err := s.SetModel(ctx, "muse-wonder-1.0"); err != nil {
 		t.Fatal(err)
 	}
-	prefs, _ := s.Store.Preferences(ctx)
-	if len(prefs.ImageModels) != 0 {
-		t.Fatal("image sharing enabled by default")
-	}
-	if err := s.SetDirectImages(ctx, "muse", true); err == nil {
-		t.Fatal("Muse text adapter accepted image opt-in")
-	}
-	if err := s.SetDirectImages(ctx, "openai", true); err != nil {
+	state, _ := s.State(ctx)
+	got := make(chan string, 1)
+	s.Provider = replyProvider(func(_ context.Context, request provider.Request, emit func(provider.Event) error) error {
+		got <- request.Model
+		emit(provider.Event{Text: "Done"})
+		return emit(provider.Event{Finish: "stop"})
+	})
+	events := make(chan storage.Message, 20)
+	if _, err := s.Send(ctx, "", state.Selection.ChatID, "Hello", "model-choice", func(m storage.Message) { events <- m }); err != nil {
 		t.Fatal(err)
 	}
-	prefs, _ = s.Store.Preferences(ctx)
-	if prefs.ImageModels["openai"] != "fixture-vision" {
-		t.Fatal(prefs)
-	}
-	config.Model = "different-model"
-	if err := s.Store.SaveProvider(ctx, config); err != nil {
-		t.Fatal(err)
-	}
-	if prefs.ImageModels["openai"] == config.Model {
-		t.Fatal("changing model retained image opt-in")
-	}
-	if err := s.SetDirectImages(ctx, "openai", false); err != nil {
-		t.Fatal(err)
-	}
-	prefs, _ = s.Store.Preferences(ctx)
-	if len(prefs.ImageModels) != 0 {
-		t.Fatal("image opt-in not removed")
+	waitReply(t, events)
+	if model := <-got; model != "muse-wonder-1.0" {
+		t.Fatal("request used the wrong model", model)
 	}
 }

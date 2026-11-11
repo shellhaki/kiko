@@ -78,7 +78,7 @@ Visual inspection was retried: native pipe startup failed and the browser access
 
 ## Contributor model switch — November 9, 2026
 
-The owner explicitly selected `muse-spark-1.3-contributor` for this demo. Verification, settings, reset defaults, new turns, and explicit retries now use it. Migration 005 changes existing provider configuration without clearing chats/documents. Historical run models remain recorded until a user explicitly retries, at which point the current provider model is selected. There is no Standard fallback.
+The default model is `muse-spark-1.3-contributor`; each chat can choose another Muse model from the catalog in `core/muse/models.go`, and explicit retries use the chat's current model. Migrations 005 and 012 change existing configuration without clearing chats/documents. Historical run models remain recorded until a user explicitly retries. There is no automatic fallback to another model.
 
 All local quality checks pass, including 31 frontend tests and Go race tests. A regression test upgrades a simulated version-4 database, preserves its saved messages, verifies Contributor retry selection, and checks reset defaults. Tests use synthetic credentials/local servers; no live inference was performed. Setup/settings disclose Contributor training usage and do not call it free.
 

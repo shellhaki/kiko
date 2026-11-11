@@ -12,7 +12,18 @@ Default configuration:
 {"id":"muse","format":"openai-chat","baseUrl":"https://api.meta.ai/v1","model":"muse-spark-1.3-contributor"}
 ```
 
-For the demo, the owner selected **`muse-spark-1.3-contributor`** on November 9, 2026. It is the only available model in this build, including connection verification, new sends, retries, and reset defaults. Existing databases migrate their provider setting without deleting content; earlier run records remain historical until an explicit retry selects the current model. There is no automatic Standard-mode fallback.
+Kiko supports Meta Muse only. The owner selected **`muse-spark-1.3-contributor`** as the default on November 9, 2026, and on November 11, 2026 added a per-chat model choice from the catalog below (`core/muse/models.go`), checked against Meta's [models page](https://dev.meta.ai/docs/models) and [pricing and rate limits](https://dev.meta.ai/docs/pricing-rate-limits). Connection verification, the reset default, and the vision helper use the default model; sends and retries use the chat's own model. There is no automatic fallback to another model or mode.
+
+| Model id | Display name | Mode | Notes from Meta's docs |
+| --- | --- | --- | --- |
+| `muse-spark-1.3-contributor` | Muse Spark 1.3 | Contributor | Default. $0.10 in / $0.20 out per 1M tokens; 150 requests and 3M tokens per minute; reasoning effort `max` unavailable. |
+| `muse-spark-1.3` | Muse Spark 1.3 | Standard | Latest Spark, recommended for new work. $1.25 in / $4.25 out; 3,000 requests and 4M tokens per minute. |
+| `muse-spark-1.2-contributor` | Muse Spark 1.2 | Contributor | Previous Spark, Contributor pricing and limits. |
+| `muse-spark-1.2` | Muse Spark 1.2 | Standard | Previous Spark. Meta recommends it over 1.3 for audio input. |
+| `muse-ember-1.0` | Muse Ember | Standard only | High-volume, low-cost work. $0.10 in / $0.50 out up to 200K input tokens. |
+| `muse-wonder-1.0` | Muse Wonder (preview) | Standard only | Complex long-horizon agent work. $4.00 in / $20.00 out. |
+
+Every chat model lists a 1,048,576-token context window and accepts text, image, video, audio, and PDF input; output is text. `muse-spark-1.1` (the original Spark) is deliberately not offered. Muse Image, Voice Transcribe, and Segment Anything use other endpoints and are not chat models, and Muse Spark Open and Glimmer are self-hosted. `GET /v1/models` returns `{object: "list", data: [{id, object, created, owned_by}]}` for API-hosted models enabled for the team, so a model in Kiko's catalog may still be unavailable to a given key. Tool-calling and streaming behavior was verified against the docs only for Spark; Ember and Wonder are untested with Kiko's agent. Prices and limits were read November 11, 2026 and can change.
 
 Contributor mode has discounted token pricing and permits Meta to use submitted content and model responses for training. It is not a free-inference guarantee. The onboarding/settings UI discloses this. This explicit owner decision supersedes the earlier Standard-only default. [Meta pricing and modes](https://dev.meta.ai/docs/pricing-rate-limits)
 

@@ -7,6 +7,34 @@ import { UIProvider } from './components/ui'
 import { flushDocument } from './document-session'
 import type { Backend } from './api'
 import type { DocumentRead } from './document-model'
+const emptyRect = { top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }
+for (const prototype of [Element.prototype, Range.prototype]) {
+  prototype.getClientRects ??= () => [] as unknown as DOMRectList
+}
+Range.prototype.getBoundingClientRect ??= () => ({ ...emptyRect }) as DOMRect
+vi.mock('./DiagramCanvas', () => ({
+  default: ({
+    scene,
+    caption,
+    onApply,
+  }: {
+    scene: string
+    caption: string
+    onApply(result: { scene: string; svg: string; caption: string }): void
+  }) => (
+    <button
+      onClick={() =>
+        onApply({
+          scene: scene || '{"type":"excalidraw","elements":[{}]}',
+          svg: '<svg height="9"/>',
+          caption: caption || 'Flow',
+        })
+      }
+    >
+      Apply mock drawing
+    </button>
+  ),
+}))
 const data: DocumentRead = {
   document: {
     id: 'doc',
@@ -32,6 +60,9 @@ function setup(value = data) {
       .mockImplementation(async (_id, rev, blocks) => ({ ...data.document, rev: rev + 1, blocks })),
     SaveDocumentView: vi.fn().mockResolvedValue(undefined),
     DiscardDocumentDraft: vi.fn().mockResolvedValue(undefined),
+    CopyDocument: vi.fn().mockResolvedValue(undefined),
+    ExportFormats: vi.fn().mockResolvedValue(['md', 'docx', 'pdf']),
+    ExportDocumentFormat: vi.fn().mockResolvedValue(true),
   }
   window.go = { main: { App: api as unknown as Backend } }
   const close = vi.fn().mockResolvedValue(undefined)
@@ -82,16 +113,54 @@ it('recovers a draft and flushes it before navigation', async () => {
     expect.arrayContaining([expect.objectContaining({ id: 'paragraph' })]),
   )
 })
-it('keeps a failed draft and blocks close until it is saved', async () => {
+it('keeps the failed draft recoverable after closing a conflicted document', async () => {
   const { api, close } = setup({ ...data, draft: { baseRev: 1, blocks: data.document.blocks } })
   api.SaveDocument.mockRejectedValue(new Error('Revision changed'))
   await screen.findByRole('textbox', { name: 'Document editor' })
   fireEvent.click(screen.getByRole('button', { name: 'Close document' }))
   await screen.findByRole('alert')
-  expect(close).not.toHaveBeenCalled()
-  expect(screen.getByRole('textbox', { name: 'Document editor' }).textContent).toBe('Saved text')
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1))
+  expect(api.SaveDocument).toHaveBeenCalled()
 })
 
+it('hides retry when another writer moved the saved revision', async () => {
+  const { api } = setup({ ...data, draft: { baseRev: 1, blocks: data.document.blocks } })
+  let advanced = false
+  api.ReadDocument.mockImplementation(async () => ({
+    ...structuredClone(data),
+    document: { ...data.document, rev: advanced ? 2 : 1 },
+  }))
+  api.SaveDocument.mockRejectedValue(new Error('Revision changed'))
+  await screen.findByRole('textbox', { name: 'Document editor' })
+  advanced = true
+  fireEvent.click(screen.getByRole('button', { name: 'Close document' }))
+  await screen.findByRole('alert')
+  expect(screen.queryByRole('button', { name: 'Retry save' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Reload saved version' })).toBeTruthy()
+})
+it('confirms copying with status and keeps the button usable', async () => {
+  const { api } = setup()
+  await screen.findByRole('textbox', { name: 'Document editor' })
+  fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown' }))
+  await waitFor(() => expect(api.CopyDocument).toHaveBeenCalledWith('doc'))
+  expect(await screen.findByText('Markdown copied')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Copy Markdown' })).toBeTruthy()
+})
+it('shows preparing state while an export runs', async () => {
+  const { api } = setup()
+  let resolve!: (done: boolean) => void
+  api.ExportDocumentFormat.mockImplementation(
+    () => new Promise<boolean>((done) => void (resolve = done)),
+  )
+  await screen.findByRole('textbox', { name: 'Document editor' })
+  fireEvent.click(screen.getByRole('button', { name: 'Export document' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'PDF document' }))
+  expect(await screen.findByRole('button', { name: 'Preparing…' })).toBeTruthy()
+  resolve(true)
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Preparing…' })).toBeNull())
+  expect(await screen.findByText('Exported')).toBeTruthy()
+})
 it('highlights anchored questions and sends a suggested answer to the original thread', async () => {
   const { api } = setup()
   api.Questions.mockResolvedValue([
@@ -224,4 +293,78 @@ it('does not let a pending scroll save restore the width before a keyboard resiz
     await new Promise((resolve) => setTimeout(resolve, 350))
   })
   expect(api.SaveDocumentView).toHaveBeenCalledTimes(1)
+})
+
+it('draws a new Excalidraw diagram and saves its scene with the document', async () => {
+  const { api } = setup()
+  const element = await screen.findByRole('textbox', { name: 'Document editor' })
+  const editor = (element as HTMLElement & { editor: Editor }).editor
+  fireEvent.click(screen.getByRole('button', { name: 'Draw diagram' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Apply mock drawing' }))
+  await waitFor(() => expect(api.SaveDocument).toHaveBeenCalled(), { timeout: 2000 })
+  const saved = api.SaveDocument.mock.calls[0][2].find(
+    (block: { type: string }) => block.type === 'embed',
+  )
+  expect(saved.attrs).toMatchObject({
+    svg: '<svg height="9"/>',
+    caption: 'Flow',
+    scene: '{"type":"excalidraw","elements":[{}]}',
+  })
+  expect(saved.attrs.ref).toBeTruthy()
+  expect(editor.getJSON().content?.some((node) => node.type === 'diagram')).toBe(true)
+})
+
+it('reopens a saved diagram scene and replaces only its drawing', async () => {
+  const scene = '{"type":"excalidraw","elements":[{"id":"saved"}]}'
+  const { api } = setup({
+    ...data,
+    document: {
+      ...data.document,
+      blocks: [
+        {
+          id: 'figure',
+          h: '11111111',
+          type: 'embed',
+          attrs: { ref: 'r1', svg: '<svg/>', scene, caption: 'Old' },
+        },
+      ],
+    },
+  })
+  const element = await screen.findByRole('textbox', { name: 'Document editor' })
+  const editor = (element as HTMLElement & { editor: Editor }).editor
+  act(() => {
+    editor.commands.setNodeSelection(0)
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit diagram' }))
+  expect(screen.queryByRole('button', { name: 'Edit SVG source' })).toBeNull()
+  fireEvent.click(await screen.findByRole('button', { name: 'Apply mock drawing' }))
+  await waitFor(() => expect(api.SaveDocument).toHaveBeenCalled(), { timeout: 2000 })
+  expect(api.SaveDocument.mock.calls[0][2][0]).toMatchObject({
+    id: 'figure',
+    attrs: { ref: 'r1', scene, caption: 'Old' },
+  })
+})
+
+it('offers SVG source and Excalidraw redraw for an agent-made diagram without a scene', async () => {
+  setup({
+    ...data,
+    document: {
+      ...data.document,
+      blocks: [
+        {
+          id: 'figure',
+          h: '11111111',
+          type: 'embed',
+          attrs: { ref: 'r1', svg: '<svg/>', caption: 'Old' },
+        },
+      ],
+    },
+  })
+  const element = await screen.findByRole('textbox', { name: 'Document editor' })
+  const editor = (element as HTMLElement & { editor: Editor }).editor
+  act(() => {
+    editor.commands.setNodeSelection(0)
+  })
+  expect(await screen.findByRole('button', { name: 'Redraw in Excalidraw' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Edit SVG source' })).toBeTruthy()
 })

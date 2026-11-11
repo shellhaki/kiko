@@ -16,4 +16,3 @@ func (image Image) Validate() error {
 	}
 	return nil
 }
-func DirectImages(id string) bool { return id == "openai" || id == "anthropic" }
